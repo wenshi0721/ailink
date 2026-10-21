@@ -1,0 +1,64 @@
+# ============================================================
+#  AiLink 工作区 —— 根级忽略规则
+#  原则：只收录「源码 / 配置模板 / 文档 / 构建输入」。
+#        第三方二进制、交付物、运行期状态、凭据、开发过程产物一律不入库。
+# ============================================================
+
+# ---------- 构建与 IDE ----------
+.gradle/
+build/
+.kotlin/
+.idea/
+*.iml
+captures/
+.externalNativeBuild/
+.cxx/
+local.properties
+.android-studio/
+
+# ---------- 交付物（release 阶段改名而来） ----------
+/dist/
+/release/
+*.apk
+*.aab
+*.keystore
+*.jks
+
+# ---------- 第三方二进制与安装包（约 922 MB） ----------
+# NapCat Shell 分发包：含 node.exe / dll / node_modules，且内部保存登录后的
+# onebot11_<QQ号>.json（含令牌），整目录不入库；需要时从 vendor/ 的 zip 重新解压。
+/bridge/napcat/
+/bridge/wechat/vendor/
+/bridge/packages/
+# 只保留各目录的说明文件
+/vendor/*
+!/vendor/README.md
+
+# ---------- 运行期状态与凭据 ----------
+/bridge/runtime/*
+!/bridge/runtime/README.md
+/bridge/wechat/state/
+/bridge/wechat/config.json
+/docs/pairing.html
+
+# ---------- 日志（内容随时间增长，不入库） ----------
+*.log
+
+# ---------- 开发过程产物（截图 / UI dump / 分析脚本） ----------
+# 这些文件由 uiautomator dump 与模拟器截图生成，会包含界面上的令牌与 wxid
+/bridge/logs/
+/android/*.png
+/android/*.xml
+/android/*.log
+
+# ---------- 工作区临时目录 ----------
+/.cache/
+/.workbuddy/
+# archive/ 只收录说明文件，产物本身（截图/UI dump）可能含令牌，一律不入库
+/archive/*
+!/archive/README.md
+
+# ---------- 系统杂项 ----------
+.DS_Store
+Thumbs.db
+desktop.ini

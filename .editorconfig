@@ -1,0 +1,42 @@
+root = true
+
+# 统一约定。冲突时以本文件为准，不再靠口头传递。
+# 注意：本文件只管空白与换行，管不了 .bat 的 GBK 编码（EditorConfig 不支持 gbk），
+# .bat 的编码约束见下方注释与根 .gitattributes。
+
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+indent_style = space
+indent_size = 4
+
+[*.{kt,kts}]
+indent_size = 4
+# 允许通配符导入（Compose / kotlinx.serialization 的常见写法）
+ij_kotlin_allow_star_imports = true
+
+[*.{xml,json,toml,yml,yaml}]
+indent_size = 2
+
+[*.md]
+# Markdown 的行尾双空格是硬换行，不能裁
+trim_trailing_whitespace = false
+
+[*.sh]
+# 容器安装脚本必须在容器内 bash 执行，CRLF 会报 $'\r': command not found
+end_of_line = lf
+
+# Windows 批处理必须是 CRLF + GBK。EditorConfig 无法表达 gbk，
+# 这里只约束换行；编码由 .gitattributes 的 `*.bat -text` 冻结字节。
+[*.{bat,cmd}]
+end_of_line = crlf
+indent_size = 2
+
+[*.{png,jpg,jpeg,webp,gif,apk,so,zip,gz,rootfs,npy}]
+# 二进制文件不做任何空白处理
+insert_final_newline = false
+trim_trailing_whitespace = false
+end_of_line = unset
+charset = unset

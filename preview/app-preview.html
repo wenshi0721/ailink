@@ -1,0 +1,497 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>接入助手 · 界面预览</title>
+<style>
+  :root{
+    --blue:#2E5BFF; --blue-soft:#E8EEFF; --blue-deep:#10306B;
+    --green:#12B76A; --green-soft:#E4F8ED; --amber:#F79009; --amber-soft:#FEF3E2;
+    --red:#E5484D; --red-soft:#FDECEC; --gray:#98A2B3; --gray-soft:#F0F1F4;
+    --bg:#F5F6FA; --surface:#FFFFFF; --variant:#F1F3F9;
+    --text:#14161C; --muted:#6B7280; --line:#EEF0F6; --outline:#E5E8F0;
+  }
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  body{
+    margin:0;padding:40px 16px 56px;background:#EDEEF3;
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;
+    color:var(--text);display:flex;flex-direction:column;align-items:center;
+  }
+  .page-title{font-size:15px;color:#5A6070;margin:0 0 4px;letter-spacing:.3px}
+  .page-sub{font-size:12px;color:#8A91A2;margin:0 0 26px}
+
+  .phone{
+    width:392px;height:812px;background:var(--bg);border-radius:44px;position:relative;
+    box-shadow:0 30px 70px rgba(18,24,40,.22),0 0 0 10px #14161C,0 0 0 12px #2A2E38;
+    overflow:hidden;display:flex;flex-direction:column;
+  }
+  .notch{position:absolute;top:12px;left:50%;transform:translateX(-50%);width:104px;height:26px;background:#14161C;border-radius:16px;z-index:30}
+  .statusbar{height:44px;display:flex;align-items:flex-end;justify-content:space-between;padding:0 26px 6px;font-size:12px;font-weight:600;color:#14161C;flex:none}
+  .statusbar .right{letter-spacing:1px;font-size:11px}
+
+  .viewport{flex:1;overflow-y:auto;overflow-x:hidden;position:relative;scrollbar-width:none}
+  .viewport::-webkit-scrollbar{display:none}
+  .screen{display:none;padding:6px 20px 26px;animation:fade .22s ease}
+  .screen.active{display:block}
+  @keyframes fade{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+
+  h1{font-size:22px;font-weight:600;margin:12px 0 2px;letter-spacing:-.2px}
+  .sub{font-size:12px;color:var(--muted)}
+  .head-row{display:flex;align-items:flex-start;justify-content:space-between}
+  .icon-btn{width:36px;height:36px;border-radius:12px;border:0;background:transparent;color:#6B7280;font-size:17px;cursor:pointer;display:grid;place-items:center}
+  .icon-btn:hover{background:#EDEFF5}
+
+  .chips{display:flex;gap:8px;overflow-x:auto;padding:4px 0 2px;scrollbar-width:none}
+  .chips::-webkit-scrollbar{display:none}
+  .chip{flex:none;border:1px solid var(--outline);background:#fff;color:#4B5563;font-size:13px;padding:7px 13px;border-radius:11px;display:flex;align-items:center;gap:6px;cursor:pointer;transition:.15s}
+  .chip.on{background:var(--blue-soft);border-color:transparent;color:var(--blue-deep);font-weight:600}
+  .chip .dot{width:6px;height:6px;border-radius:50%;background:var(--green)}
+  .chip.add{border-style:dashed;color:#8A91A2}
+
+  .card{background:var(--surface);border:1px solid var(--line);border-radius:18px;padding:16px;margin-top:14px}
+  .card.plain{padding:6px}
+
+  .row{display:flex;align-items:center;gap:10px}
+  .between{display:flex;align-items:center;justify-content:space-between;gap:10px}
+  .grow{flex:1;min-width:0}
+
+  .sw{width:46px;height:27px;border-radius:20px;background:#DDE1EA;position:relative;cursor:pointer;flex:none;transition:.2s}
+  .sw::after{content:"";position:absolute;top:3px;left:3px;width:21px;height:21px;border-radius:50%;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.2);transition:.2s}
+  .sw.on{background:var(--blue)}
+  .sw.on::after{left:22px}
+
+  .tag{font-size:10.5px;padding:2px 6px;border-radius:6px;font-weight:600;letter-spacing:.2px}
+  .t-blue{background:var(--blue-soft);color:var(--blue)}
+  .t-green{background:var(--green-soft);color:#0B8A52}
+  .t-gray{background:var(--gray-soft);color:#78808F}
+  .t-amber{background:var(--amber-soft);color:#B26A00}
+
+  .pill{display:inline-flex;align-items:center;gap:5px;font-size:11px;font-weight:600;padding:4px 9px;border-radius:20px}
+  .p-on{background:rgba(18,183,106,.12);color:var(--green)}
+  .p-warn{background:rgba(247,144,9,.12);color:var(--amber)}
+  .p-off{background:rgba(152,162,179,.16);color:#7C8698}
+  .pill i{width:6px;height:6px;border-radius:50%;background:currentColor;display:block}
+
+  .avatar{width:44px;height:44px;border-radius:15px;display:grid;place-items:center;font-weight:600;font-size:17px;flex:none}
+  .av-qq{background:var(--blue-soft);color:var(--blue)}
+  .av-wx{background:var(--green-soft);color:#07A85A}
+
+  .name{font-size:15px;font-weight:600}
+  .meta{font-size:11.5px;color:var(--muted)}
+  .divider{height:1px;background:var(--line);margin:12px 0}
+
+  .stats{display:flex;margin-top:12px}
+  .stat{flex:1}
+  .stat b{display:block;font-size:19px;font-weight:600}
+  .stat span{font-size:11px;color:var(--muted)}
+
+  .section{display:flex;align-items:center;justify-content:space-between;margin:20px 0 8px}
+  .section h2{font-size:13.5px;font-weight:600;margin:0;color:#262A33}
+  .section a{font-size:11.5px;color:var(--blue);text-decoration:none;font-weight:600}
+
+  .conv{display:flex;gap:10px;padding:11px 10px;cursor:pointer;border-radius:12px}
+  .conv:hover{background:#FAFBFD}
+  .conv .avatar{width:40px;height:40px;border-radius:14px;font-size:15px}
+  .conv .top{display:flex;align-items:center;gap:6px}
+  .conv .top b{font-size:14px;font-weight:600;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .conv .time{font-size:10.5px;color:#9AA1B0;flex:none}
+  .conv .prev{font-size:12px;color:var(--muted);margin-top:3px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .badge{min-width:18px;height:18px;border-radius:9px;background:var(--blue);color:#fff;font-size:10px;font-weight:600;display:grid;place-items:center;padding:0 5px}
+
+  .banner{display:flex;gap:10px;border-radius:14px;padding:14px;margin-top:16px;font-size:11.5px;line-height:1.6}
+  .b-info{background:var(--blue-soft);color:#1E3F9E}
+  .b-warn{background:#FFF7E8;color:#8A5A00}
+  .banner b{display:block;font-size:12.5px;margin-bottom:2px}
+
+  .nav{flex:none;display:flex;background:#fff;border-top:1px solid var(--line);padding:8px 6px 20px}
+  .nav button{flex:1;border:0;background:transparent;color:#98A2B3;font-size:10.5px;display:flex;flex-direction:column;align-items:center;gap:3px;cursor:pointer;font-weight:500}
+  .nav button .ico{width:24px;height:24px;display:grid;place-items:center;border-radius:9px;font-size:16px}
+  .nav button.on{color:var(--blue)}
+  .nav button.on .ico{background:var(--blue-soft)}
+  .homebar{position:absolute;bottom:8px;left:50%;transform:translateX(-50%);width:126px;height:4px;border-radius:3px;background:#0F1116;opacity:.28;z-index:20}
+
+  /* chat */
+  .chat-head{display:flex;align-items:center;gap:6px;padding:2px 0 8px}
+  .chat-head .avatar{width:34px;height:34px;border-radius:12px;font-size:14px}
+  .chat-body{display:flex;flex-direction:column;gap:10px;padding:6px 0 14px}
+  .stamp{align-self:center;font-size:10.5px;color:#98A2B3;background:var(--variant);padding:3px 9px;border-radius:20px}
+  .msg{display:flex;gap:8px;max-width:86%}
+  .msg .bubble{background:#fff;border:1px solid var(--line);padding:9px 12px;border-radius:14px 14px 14px 4px;font-size:13px;line-height:1.55}
+  .msg.out{align-self:flex-end;justify-content:flex-end}
+  .msg.out .bubble{background:var(--blue);color:#fff;border:0;border-radius:14px 14px 4px 14px}
+  .msg .avatar{width:30px;height:30px;border-radius:10px;font-size:12px}
+  .sys{align-self:center;font-size:10.5px;color:#98A2B3}
+  .inputbar{display:flex;gap:8px;align-items:flex-end;padding:8px 0 2px;border-top:1px solid var(--line);margin-top:4px}
+  .inputbar .field{flex:1;background:#fff;border:1px solid var(--outline);border-radius:20px;padding:10px 14px;font-size:13px;color:#9AA1B0}
+  .send{width:42px;height:42px;border-radius:14px;background:var(--blue);color:#fff;display:grid;place-items:center;font-size:15px;flex:none}
+
+  .settings-row{display:flex;align-items:center;gap:12px;padding:12px 0}
+  .settings-row .grow b{font-size:14px;font-weight:500;display:block}
+  .settings-row .grow span{font-size:11.5px;color:var(--muted)}
+  .chev{color:#B6BCC9;font-size:16px}
+  .foot{font-size:10.5px;color:#98A2B3;text-align:center;margin-top:18px;line-height:1.6}
+
+  .legend{max-width:760px;margin:28px auto 0;font-size:12px;color:#6B7280;line-height:1.8;text-align:center}
+  .legend code{background:#fff;padding:1px 5px;border-radius:5px;border:1px solid #E2E5EC;font-size:11px}
+</style>
+</head>
+<body>
+  <p class="page-title">接入助手 · Android 界面预览</p>
+  <p class="page-sub">静态交互原型，用于预览视觉与信息结构；实际功能以安装包为准</p>
+
+  <div class="phone">
+    <div class="notch"></div>
+    <div class="statusbar"><span>9:41</span><span class="right">5G ▮▮▮ 88%</span></div>
+
+    <div class="viewport" id="viewport">
+
+      <!-- 概览 -->
+      <section class="screen active" id="s-home">
+        <div class="head-row">
+          <div><h1>接入助手</h1><div class="sub">10 月 19 日 · 星期日</div></div>
+          <button class="icon-btn" onclick="go('settings')">⚙</button>
+        </div>
+
+        <div class="chips" style="margin-top:14px">
+          <div class="chip" onclick="pickChip(this)">全部账号</div>
+          <div class="chip on" onclick="pickChip(this)"><i class="dot"></i>演示账号</div>
+          <div class="chip" onclick="pickChip(this)"><i class="dot" style="background:#98A2B3"></i>工作微信</div>
+          <div class="chip add" onclick="go('accounts')">＋ 新增</div>
+        </div>
+
+        <div class="card">
+          <div class="between">
+            <div class="grow">
+              <div class="row" style="gap:7px">
+                <span style="width:9px;height:9px;border-radius:50%;background:var(--green)"></span>
+                <b style="font-size:15.5px">接入服务</b>
+                <span class="tag t-green">运行中</span>
+              </div>
+              <div class="meta" style="margin-top:5px">账号保持在线，收到的消息将自动回复</div>
+            </div>
+            <div class="sw on" onclick="toggleEngine(this)"></div>
+          </div>
+          <div class="divider"></div>
+          <div class="stats">
+            <div class="stat"><b style="color:var(--green)">1/2</b><span>在线账号</span></div>
+            <div class="stat"><b>18</b><span>今日收到</span></div>
+            <div class="stat"><b>16</b><span>今日回复</span></div>
+          </div>
+        </div>
+
+        <div class="section"><h2>当前账号</h2></div>
+        <div class="card">
+          <div class="row">
+            <div class="avatar av-qq">演</div>
+            <div class="grow">
+              <div class="row" style="gap:6px"><span class="name">演示账号</span><span class="tag t-blue">QQ</span></div>
+              <div class="row" style="margin-top:6px;gap:8px">
+                <span class="pill p-on"><i></i>在线</span>
+                <span class="meta">已在线 2 小时 14 分</span>
+              </div>
+            </div>
+            <div class="sw on" onclick="toggleAccount(this)"></div>
+          </div>
+          <div class="divider"></div>
+          <div class="stats">
+            <div class="stat"><b style="font-size:14px">演示</b><span>接入方式</span></div>
+            <div class="stat"><b style="font-size:14px">18 ms</b><span>延迟</span></div>
+            <div class="stat"><b style="font-size:14px">18 / 16</b><span>本次收发</span></div>
+          </div>
+          <div class="row" style="margin-top:10px">
+            <a href="javascript:go('accounts')" style="font-size:12.5px;color:var(--blue);text-decoration:none;font-weight:600">编辑配置</a>
+            <span class="meta" style="margin-left:14px">开关可临时下线该账号</span>
+          </div>
+        </div>
+
+        <div class="section"><h2>最近消息</h2><a href="javascript:go('messages')">查看全部</a></div>
+        <div class="card plain">
+          <div class="conv" onclick="go('chat')">
+            <div class="avatar av-qq">林</div>
+            <div class="grow">
+              <div class="top"><b>林小满</b><span class="time">刚刚</span></div>
+              <div class="prev">嗯，我看到了，等我理一下思路。</div>
+            </div>
+            <div class="badge">2</div>
+          </div>
+          <div style="height:1px;background:var(--line);margin:0 12px"></div>
+          <div class="conv" onclick="go('chat')">
+            <div class="avatar av-qq">群</div>
+            <div class="grow">
+              <div class="top"><b>产品评审群</b><span class="time">12 分钟前</span></div>
+              <div class="prev">我来整理一下时间点</div>
+            </div>
+          </div>
+          <div style="height:1px;background:var(--line);margin:0 12px"></div>
+          <div class="conv" onclick="go('chat')">
+            <div class="avatar av-qq">陈</div>
+            <div class="grow">
+              <div class="top"><b>陈默</b><span class="time">昨天 21:04</span></div>
+              <div class="prev">那家新开的面馆要不要去试试</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="banner b-info">
+          <span>ⓘ</span>
+          <div><b>演示模式可用</b>「本地演示」账号不连接任何平台，按脚本模拟收发消息，可直接验证自动回复流程。</div>
+        </div>
+      </section>
+
+      <!-- 账号 -->
+      <section class="screen" id="s-accounts">
+        <h1>账号</h1>
+        <div class="sub">共 2 个账号 · 1 个在线</div>
+
+        <button style="width:100%;margin-top:14px;padding:13px;border:0;border-radius:14px;background:var(--blue);color:#fff;font-size:14px;font-weight:600;cursor:pointer">＋ 新增账号</button>
+
+        <div class="card">
+          <div class="row">
+            <div class="avatar av-qq">演</div>
+            <div class="grow">
+              <div class="row" style="gap:6px">
+                <span class="name">演示账号</span>
+                <span class="tag t-blue">当前</span>
+              </div>
+              <div class="row" style="margin-top:6px;gap:6px">
+                <span class="tag t-blue">QQ</span>
+                <span class="tag t-amber">演示</span>
+                <span class="pill p-on"><i></i>在线</span>
+              </div>
+            </div>
+            <span style="color:#B6BCC9;font-size:18px">⋮</span>
+          </div>
+          <div class="divider"></div>
+          <div class="between">
+            <div>
+              <div style="font-size:13px;color:#4B5563">382719</div>
+              <div class="meta" style="margin-top:2px">最近活动 刚刚</div>
+            </div>
+            <div class="sw on" onclick="toggleAccount(this)"></div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="row">
+            <div class="avatar av-wx">工</div>
+            <div class="grow">
+              <div class="name">工作微信</div>
+              <div class="row" style="margin-top:6px;gap:6px">
+                <span class="tag t-green">微信</span>
+                <span class="tag t-blue">OneBot</span>
+                <span class="pill p-off"><i></i>已停止</span>
+              </div>
+            </div>
+            <span style="color:#B6BCC9;font-size:18px">⋮</span>
+          </div>
+          <div class="divider"></div>
+          <div class="between">
+            <div>
+              <div style="font-size:13px;color:#4B5563">wxid_work_01</div>
+              <div class="meta" style="margin-top:2px">自动回复已开启</div>
+            </div>
+            <div class="sw" onclick="toggleAccount(this)"></div>
+          </div>
+        </div>
+
+        <div class="banner b-warn">
+          <span>⚠</span>
+          <div><b>合规提示</b>请仅接入本人拥有合法使用权的账号，非官方协议接入存在登录受限风险。</div>
+        </div>
+      </section>
+
+      <!-- 消息 -->
+      <section class="screen" id="s-messages">
+        <h1>消息</h1>
+        <div class="sub">共 4 个会话 · 2 条未读 · 仅看 演示账号</div>
+
+        <div style="margin-top:12px;background:#fff;border:1px solid var(--outline);border-radius:12px;padding:11px 14px;font-size:13px;color:#9AA1B0">⌕ 搜索联系人或消息内容</div>
+
+        <div class="chips" style="margin-top:10px">
+          <div class="chip on" onclick="pickChip(this)">全部</div>
+          <div class="chip" onclick="pickChip(this)">未读</div>
+          <div class="chip" onclick="pickChip(this)">群聊</div>
+          <div class="chip" onclick="pickChip(this)">私聊</div>
+        </div>
+
+        <div class="card plain">
+          <div class="conv" onclick="go('chat')">
+            <div class="avatar av-qq">林</div>
+            <div class="grow">
+              <div class="top"><b>林小满</b><span class="time">刚刚</span></div>
+              <div class="prev">嗯，我看到了，等我理一下思路。</div>
+            </div>
+            <div class="badge">2</div>
+          </div>
+          <div style="height:1px;background:var(--line);margin:0 12px"></div>
+          <div class="conv" onclick="go('chat')">
+            <div class="avatar av-qq">群</div>
+            <div class="grow">
+              <div class="top"><b>产品评审群</b><span class="tag t-gray">群</span><span class="time">12 分钟前</span></div>
+              <div class="prev">我来整理一下时间点</div>
+            </div>
+            <span class="tag t-blue">QQ</span>
+          </div>
+          <div style="height:1px;background:var(--line);margin:0 12px"></div>
+          <div class="conv" onclick="go('chat')">
+            <div class="avatar av-qq">陈</div>
+            <div class="grow">
+              <div class="top"><b>陈默</b><span class="time">昨天 21:04</span></div>
+              <div class="prev">那家新开的面馆要不要去试试</div>
+            </div>
+            <span class="tag t-blue">QQ</span>
+          </div>
+          <div style="height:1px;background:var(--line);margin:0 12px"></div>
+          <div class="conv" onclick="go('chat')">
+            <div class="avatar av-qq">阿</div>
+            <div class="grow">
+              <div class="top"><b>阿岚</b><span class="time">10-18</span></div>
+              <div class="prev">改天请你喝咖啡</div>
+            </div>
+            <span class="tag t-blue">QQ</span>
+          </div>
+        </div>
+      </section>
+
+      <!-- 聊天 -->
+      <section class="screen" id="s-chat">
+        <div class="chat-head">
+          <button class="icon-btn" onclick="go('messages')">←</button>
+          <div class="avatar av-qq">林</div>
+          <div class="grow">
+            <div style="font-size:15px;font-weight:600">林小满</div>
+            <div class="meta" style="display:flex;align-items:center;gap:5px;margin-top:1px">
+              <span style="width:6px;height:6px;border-radius:50%;background:var(--green)"></span>私聊 · 演示账号
+            </div>
+          </div>
+          <button class="icon-btn">⋮</button>
+        </div>
+
+        <div class="between" style="padding:2px 2px 6px">
+          <span class="meta">该会话自动回复</span>
+          <div class="sw on"></div>
+        </div>
+
+        <div class="chat-body">
+          <div class="stamp">今天 20:52</div>
+          <div class="msg"><div class="avatar av-qq">林</div><div class="bubble">在吗？</div></div>
+          <div class="msg out"><div class="bubble">在的，刚看到消息～</div></div>
+          <div class="msg"><div class="avatar av-qq">林</div><div class="bubble">下午的评审你还参加吗</div></div>
+          <div class="msg out"><div class="bubble">我这会儿有点事，等下回你。</div></div>
+          <div class="stamp">今天 21:03</div>
+          <div class="msg"><div class="avatar av-qq">林</div><div class="bubble">我这边把方案改了一版，等下发你</div></div>
+          <div class="msg out"><div class="bubble">收到，我先记下来了。</div></div>
+          <div class="msg"><div class="avatar av-qq">林</div><div class="bubble">你觉得先做小范围灰度可以吗</div></div>
+          <div class="msg out"><div class="bubble">听起来挺有意思的，多说两句？</div></div>
+        </div>
+
+        <div class="inputbar">
+          <div class="field">输入消息…</div>
+          <div class="send">➤</div>
+        </div>
+      </section>
+
+      <!-- 设置 -->
+      <section class="screen" id="s-settings">
+        <h1>设置</h1>
+
+        <div class="card" style="margin-top:12px">
+          <div class="between">
+            <div class="grow">
+              <div style="font-size:15px;font-weight:600">接入服务</div>
+              <div class="meta" style="margin-top:3px">前台服务运行中，退出应用仍保持在线</div>
+            </div>
+            <div class="sw on" onclick="toggleEngine(this)"></div>
+          </div>
+        </div>
+
+        <div class="section"><h2>配置</h2></div>
+        <div class="card">
+          <div class="settings-row">
+            <div class="grow"><b>AI 服务</b><span>已配置 2 个（内置模拟回复始终可用）</span></div>
+            <span class="chev">›</span>
+          </div>
+          <div class="divider" style="margin:0"></div>
+          <div class="settings-row">
+            <div class="grow"><b>账号管理</b><span>共 2 个账号，2 个参与接入</span></div>
+            <span class="chev">›</span>
+          </div>
+        </div>
+
+        <div class="section"><h2>数据</h2></div>
+        <div class="card">
+          <div class="settings-row">
+            <div class="grow"><b>消息记录</b><span>本地共保存 126 条消息</span></div>
+            <span class="meta">Room 本地库</span>
+          </div>
+          <div class="divider" style="margin:0"></div>
+          <div class="settings-row">
+            <div class="grow"><b>清空全部聊天记录</b><span>只删除消息，不影响账号与 AI 配置</span></div>
+            <span style="color:var(--red);font-size:13px">清空</span>
+          </div>
+        </div>
+
+        <div class="section"><h2>关于</h2></div>
+        <div class="card">
+          <div class="settings-row">
+            <div class="grow"><b>版本</b></div><span class="meta">v1.0.0</span>
+          </div>
+          <div class="divider" style="margin:0"></div>
+          <div class="settings-row">
+            <div class="grow"><b>接入协议与合规说明</b><span>非官方协议的风险提示与使用边界</span></div>
+            <span class="chev">›</span>
+          </div>
+        </div>
+
+        <div class="banner b-warn">
+          <span>⚠</span>
+          <div><b>合规使用提示</b>请仅接入你本人拥有合法使用权的账号，并遵守平台用户协议。通过非官方协议接入 QQ / 微信 存在被限制登录的风险，建议使用小号或独立设备测试。</div>
+        </div>
+
+        <div class="foot">接入助手 · 本地数据不上传 · 仅用于个人学习与自建服务</div>
+      </section>
+
+    </div>
+
+    <div class="nav" id="nav">
+      <button class="on" data-tab="home" onclick="go('home')"><span class="ico">⌂</span>概览</button>
+      <button data-tab="accounts" onclick="go('accounts')"><span class="ico">☺</span>账号</button>
+      <button data-tab="messages" onclick="go('messages')"><span class="ico">✉</span>消息</button>
+      <button data-tab="settings" onclick="go('settings')"><span class="ico">⚙</span>设置</button>
+    </div>
+    <div class="homebar"></div>
+  </div>
+
+  <div class="legend">
+    技术实现：<code>Kotlin</code> · <code>Jetpack Compose</code> · <code>Material 3</code> · <code>Room</code> · <code>OkHttp WebSocket</code> · <code>Foreground Service</code><br />
+    点击底部导航可切换页面，点击会话可进入聊天页。
+  </div>
+
+<script>
+  function go(name){
+    document.querySelectorAll('.screen').forEach(function(el){ el.classList.remove('active'); });
+    var target = document.getElementById('s-' + name);
+    if (target) target.classList.add('active');
+    document.getElementById('viewport').scrollTop = 0;
+
+    var isTab = ['home','accounts','messages','settings'].indexOf(name) >= 0;
+    document.getElementById('nav').style.visibility = isTab ? 'visible' : 'hidden';
+    document.querySelectorAll('#nav button').forEach(function(btn){
+      btn.classList.toggle('on', btn.dataset.tab === name);
+    });
+  }
+  function toggleEngine(el){
+    el.classList.toggle('on');
+  }
+  function toggleAccount(el){
+    el.classList.toggle('on');
+  }
+  function pickChip(el){
+    var parent = el.parentElement;
+    parent.querySelectorAll('.chip').forEach(function(c){ c.classList.remove('on'); });
+    if (!el.classList.contains('add')) el.classList.add('on');
+  }
+</script>
+</body>
+</html>

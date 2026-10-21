@@ -1,0 +1,863 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>接入助手 · 界面预览 v2</title>
+<!--
+  设计说明（design token）
+  ─ 配色：主色 #2E5BFF（唯一主色）；语义色 #12B76A 成功 / #F79009 警告 / #E5484D 错误，
+    仅用于状态且一律叠加文字标签；中性色 #14161C / #6B7280 / #EEF0F6 / #F5F6FA。
+  ─ 字号层级：22 页面标题 / 15.5 卡片标题 / 14 列表主文 / 13 正文 / 12 辅助 / 11 说明。
+  ─ 间距：4/8 体系（4·8·12·16·20·24）；圆角：卡片 18 / 内层 12 / 气泡 14 / 胶囊 999。
+  ─ 阴影：仅手机壳与悬浮元素使用，卡片用 1px 边框，不做阴影堆砌。
+  ─ 图标：单一内联 SVG 图标集（stroke 1.8 / 24px / currentColor），禁止 emoji。
+  ─ 动效：150–250ms，仅用于页面切换与状态反馈；尊重 prefers-reduced-motion。
+  ─ 可访问性：图标按钮带 aria-label，开关为 role="switch" 且可键盘操作，
+    焦点可见（2px 主色描边），可点区域 ≥ 44px，状态不单靠颜色传达。
+-->
+<style>
+  :root{
+    --blue:#2E5BFF; --blue-deep:#10306B; --blue-soft:#E8EEFF;
+    --green:#12B76A; --green-soft:#E4F8ED; --green-text:#0B7A49;
+    --amber:#F79009; --amber-soft:#FEF3E2; --amber-text:#8A5A00;
+    --red:#E5484D; --red-soft:#FDECEC; --red-text:#B3262B;
+    --bg:#F5F6FA; --surface:#FFFFFF; --variant:#F1F3F9;
+    --text:#14161C; --muted:#6B7280; --line:#EEF0F6; --outline:#E5E8F0;
+    --r-card:18px; --r-inner:12px; --r-bubble:14px;
+    --dur:.18s;
+  }
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  body{
+    margin:0;padding:40px 16px 56px;background:#EDEEF3;
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;
+    color:var(--text);display:flex;flex-direction:column;align-items:center;
+  }
+  button{font-family:inherit}
+  :focus-visible{outline:2px solid var(--blue);outline-offset:2px;border-radius:8px}
+
+  .page-title{font-size:15px;color:#5A6070;margin:0 0 4px;letter-spacing:.3px}
+  .page-sub{font-size:12px;color:#8A91A2;margin:0 0 26px}
+
+  .phone{
+    width:392px;height:812px;background:var(--bg);border-radius:44px;position:relative;
+    box-shadow:0 30px 70px rgba(18,24,40,.22),0 0 0 10px #14161C,0 0 0 12px #2A2E38;
+    overflow:hidden;display:flex;flex-direction:column;
+  }
+  .notch{position:absolute;top:12px;left:50%;transform:translateX(-50%);width:104px;height:26px;background:#14161C;border-radius:16px;z-index:30}
+  .statusbar{height:44px;display:flex;align-items:flex-end;justify-content:space-between;padding:0 26px 6px;font-size:12px;font-weight:600;flex:none}
+  .statusbar .right{letter-spacing:1px;font-size:11px}
+
+  .viewport{flex:1;overflow-y:auto;overflow-x:hidden;position:relative;scrollbar-width:none}
+  .viewport::-webkit-scrollbar{display:none}
+  .screen{display:none;padding:6px 20px 26px;animation:fade .2s ease}
+  .screen.active{display:block}
+  @keyframes fade{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+
+  h1{font-size:22px;font-weight:600;margin:12px 0 2px;letter-spacing:-.2px}
+  .sub{font-size:12px;color:var(--muted)}
+  .head-row{display:flex;align-items:flex-start;justify-content:space-between}
+
+  .icon-btn{
+    width:44px;height:44px;border-radius:12px;border:0;background:transparent;color:var(--muted);
+    cursor:pointer;display:grid;place-items:center;flex:none;transition:background var(--dur)
+  }
+  .icon-btn:hover{background:#EDEFF5}
+  .icon-btn:active{background:#E4E7EF}
+  .icon-btn svg{width:20px;height:20px}
+  .icon-btn.sm{width:36px;height:36px;border-radius:10px}
+  .icon-btn.sm svg{width:17px;height:17px}
+
+  .chips{display:flex;gap:8px;overflow-x:auto;padding:4px 0 2px;scrollbar-width:none}
+  .chips::-webkit-scrollbar{display:none}
+  .chip{
+    flex:none;min-height:44px;border:1px solid var(--outline);background:#fff;color:#4B5563;
+    font-size:13px;padding:0 14px;border-radius:12px;display:flex;align-items:center;gap:6px;
+    cursor:pointer;transition:background var(--dur),border-color var(--dur)
+  }
+  .chip:hover{border-color:#D3D9E6}
+  .chip:active{background:var(--variant)}
+  .chip[aria-pressed="true"]{background:var(--blue-soft);border-color:transparent;color:var(--blue-deep);font-weight:600}
+  .chip .dot{width:6px;height:6px;border-radius:50%;background:var(--green)}
+  .chip .dot.off{background:#98A2B3}
+  .chip.add{border-style:dashed;color:#8A91A2}
+
+  .card{background:var(--surface);border:1px solid var(--line);border-radius:var(--r-card);padding:16px;margin-top:14px;position:relative}
+  .card.plain{padding:6px}
+  .card.loading::after{
+    content:"";position:absolute;inset:0;border-radius:var(--r-card);
+    background:linear-gradient(100deg,transparent 30%,rgba(255,255,255,.8) 50%,transparent 70%);
+    animation:shine 1s linear infinite;
+  }
+  @keyframes shine{from{transform:translateX(-100%)}to{transform:translateX(100%)}}
+
+  .row{display:flex;align-items:center;gap:10px}
+  .between{display:flex;align-items:center;justify-content:space-between;gap:10px}
+  .grow{flex:1;min-width:0}
+
+  /* 开关：可视轨道 46x27，点击区扩展到 44px 高 */
+  .sw{
+    width:46px;height:44px;border:0;background:transparent;padding:0;cursor:pointer;
+    display:grid;place-items:center;flex:none;
+  }
+  .sw .track{width:46px;height:27px;border-radius:20px;background:#DDE1EA;position:relative;transition:background var(--dur)}
+  .sw .track::after{
+    content:"";position:absolute;top:3px;left:3px;width:21px;height:21px;border-radius:50%;
+    background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.2);transition:left var(--dur)
+  }
+  .sw[aria-checked="true"] .track{background:var(--blue)}
+  .sw[aria-checked="true"] .track::after{left:22px}
+  .sw:disabled{cursor:not-allowed;opacity:.5}
+
+  .tag{font-size:10.5px;padding:2px 6px;border-radius:6px;font-weight:600;letter-spacing:.2px;white-space:nowrap}
+  .t-blue{background:var(--blue-soft);color:var(--blue)}
+  .t-green{background:var(--green-soft);color:var(--green-text)}
+  .t-gray{background:#F0F1F4;color:#5F6774}
+  .t-amber{background:var(--amber-soft);color:var(--amber-text)}
+
+  .pill{display:inline-flex;align-items:center;gap:5px;font-size:11px;font-weight:600;padding:4px 9px;border-radius:20px}
+  .p-on{background:rgba(18,183,106,.12);color:var(--green-text)}
+  .p-warn{background:rgba(247,144,9,.12);color:var(--amber-text)}
+  .p-off{background:rgba(152,162,179,.16);color:#5F6774}
+  .pill i{width:6px;height:6px;border-radius:50%;background:currentColor;display:block}
+
+  .avatar{width:44px;height:44px;border-radius:15px;display:grid;place-items:center;font-weight:600;font-size:17px;flex:none}
+  .av-qq{background:var(--blue-soft);color:var(--blue)}
+  .av-wx{background:var(--green-soft);color:#077A4E}
+
+  .name{font-size:15px;font-weight:600}
+  .meta{font-size:11.5px;color:var(--muted)}
+  .divider{height:1px;background:var(--line);margin:12px 0}
+
+  .stats{display:flex;margin-top:12px}
+  .stat{flex:1;min-width:0}
+  .stat b{display:block;font-size:19px;font-weight:600;font-variant-numeric:tabular-nums}
+  .stat span{font-size:11px;color:var(--muted)}
+
+  .section{display:flex;align-items:center;justify-content:space-between;margin:20px 0 8px}
+  .section h2{font-size:13.5px;font-weight:600;margin:0;color:#262A33}
+  .section a,.link{font-size:11.5px;color:var(--blue);text-decoration:none;font-weight:600;background:none;border:0;cursor:pointer;padding:4px}
+  .link:disabled{color:#98A2B3;cursor:not-allowed}
+
+  /* 会话行 */
+  .conv{
+    display:flex;gap:10px;padding:11px 10px;cursor:pointer;border-radius:12px;align-items:center;
+    width:100%;background:none;border:0;text-align:left;color:var(--text);transition:background var(--dur)
+  }
+  @media (hover:hover){.conv:hover{background:#FAFBFD}}
+  .conv .avatar{width:40px;height:40px;border-radius:14px;font-size:15px}
+  .conv .top{display:flex;align-items:center;gap:6px}
+  .conv .top b{font-size:14px;font-weight:600;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .conv .time{font-size:10.5px;color:var(--muted);flex:none}
+  .conv .prev{font-size:12px;color:var(--muted);margin-top:3px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .badge{min-width:18px;height:18px;border-radius:9px;background:var(--blue);color:#fff;font-size:10px;font-weight:600;display:grid;place-items:center;padding:0 5px;flex:none}
+  .conv .end{display:flex;flex-direction:column;align-items:flex-end;gap:6px;flex:none}
+
+  .banner{display:flex;gap:10px;border-radius:14px;padding:14px;margin-top:16px;font-size:11.5px;line-height:1.6;align-items:flex-start}
+  .banner svg{width:16px;height:16px;flex:none;margin-top:1px}
+  .b-info{background:var(--blue-soft);color:#1E3F9E}
+  .b-warn{background:#FFF7E8;color:var(--amber-text)}
+
+  .nav{flex:none;display:flex;background:#fff;border-top:1px solid var(--line);padding:8px 6px 20px}
+  .nav button{
+    flex:1;min-height:48px;border:0;background:transparent;color:#7C8698;font-size:10.5px;
+    display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;cursor:pointer;font-weight:500
+  }
+  .nav button svg{width:21px;height:21px}
+  .nav button.on{color:var(--blue);font-weight:600}
+  .nav button.on .ico{background:var(--blue-soft)}
+  .nav button .ico{width:32px;height:26px;display:grid;place-items:center;border-radius:9px}
+  .homebar{position:absolute;bottom:8px;left:50%;transform:translateX(-50%);width:126px;height:4px;border-radius:3px;background:#0F1116;opacity:.28;z-index:20}
+
+  /* 统计页 */
+  .chart-legend{display:flex;gap:14px;font-size:11px;color:var(--muted);margin-top:8px}
+  .chart-legend i{width:8px;height:8px;border-radius:2px;display:inline-block;margin-right:4px;vertical-align:-1px}
+  .quality-row{display:flex;align-items:center;justify-content:space-between;padding:10px 0;font-size:13px}
+  .quality-row b{font-weight:600;font-variant-numeric:tabular-nums}
+  .dist-row{margin-top:12px}
+  .dist-row .between{font-size:12px;margin-bottom:6px}
+  .dist-bar{height:6px;border-radius:3px;background:var(--variant);overflow:hidden}
+  .dist-bar i{display:block;height:100%;border-radius:3px;background:var(--blue)}
+
+  /* 空态 */
+  .empty{padding:36px 16px;text-align:center;color:var(--muted);font-size:12.5px;line-height:1.7}
+  .empty svg{width:28px;height:28px;color:#B6BCC9;margin-bottom:8px}
+  .empty b{display:block;font-size:13.5px;color:var(--text);font-weight:600;margin-bottom:2px}
+
+  /* 聊天 */
+  .chat-head{display:flex;align-items:center;gap:6px;padding:2px 0 8px}
+  .chat-head .avatar{width:34px;height:34px;border-radius:12px;font-size:14px}
+  .chat-body{display:flex;flex-direction:column;gap:10px;padding:6px 0 14px}
+  .stamp{align-self:center;font-size:10.5px;color:var(--muted);background:var(--variant);padding:3px 9px;border-radius:20px}
+  .msg{display:flex;gap:8px;max-width:86%}
+  .msg .avatar{width:30px;height:30px;border-radius:10px;font-size:12px}
+  .msg .bubble{background:#fff;border:1px solid var(--line);padding:9px 12px;border-radius:var(--r-bubble) var(--r-bubble) var(--r-bubble) 4px;font-size:13px;line-height:1.6;word-break:break-word}
+  .msg.out{align-self:flex-end;justify-content:flex-end}
+  .msg.out .bubble{background:var(--blue);color:#fff;border:0;border-radius:var(--r-bubble) var(--r-bubble) 4px var(--r-bubble)}
+  .ai-tag{font-size:9.5px;font-weight:600;background:rgba(255,255,255,.22);padding:1px 5px;border-radius:4px;margin-left:6px;letter-spacing:.5px}
+  .msg-fail{
+    align-self:flex-end;max-width:86%;display:flex;align-items:center;gap:8px;
+    background:var(--red-soft);color:var(--red-text);border-radius:12px;padding:8px 12px;font-size:11.5px
+  }
+  .msg-fail svg{width:14px;height:14px;flex:none}
+  .sys{align-self:center;font-size:10.5px;color:var(--muted)}
+  .inputbar{display:flex;gap:8px;align-items:flex-end;padding:8px 0 2px;border-top:1px solid var(--line);margin-top:4px}
+  .inputbar .field{
+    flex:1;background:#fff;border:1px solid var(--outline);border-radius:20px;padding:10px 14px;
+    font-size:13px;color:var(--text);min-height:44px
+  }
+  .inputbar .field::placeholder{color:#9AA1B0}
+  .inputbar .field:focus{border-color:var(--blue);outline:none;box-shadow:0 0 0 3px rgba(46,91,255,.12)}
+  .send{
+    width:44px;height:44px;border-radius:14px;background:var(--blue);color:#fff;border:0;
+    display:grid;place-items:center;cursor:pointer;flex:none;transition:opacity var(--dur),transform var(--dur)
+  }
+  .send svg{width:18px;height:18px}
+  .send:active{transform:scale(.94)}
+  .send:disabled{background:#C6CEE8;cursor:not-allowed;transform:none}
+
+  .settings-row{display:flex;align-items:center;gap:12px;padding:12px 0;min-height:52px}
+  .settings-row .grow b{font-size:14px;font-weight:500;display:block}
+  .settings-row .grow span{font-size:11.5px;color:var(--muted)}
+  .foot{font-size:10.5px;color:var(--muted);text-align:center;margin-top:18px;line-height:1.6}
+
+  .legend{max-width:760px;margin:28px auto 0;font-size:12px;color:#6B7280;line-height:1.8;text-align:center}
+  .legend code{background:#fff;padding:1px 5px;border-radius:5px;border:1px solid #E2E5EC;font-size:11px}
+
+  /* 窄屏：手机壳铺满视口 */
+  @media (max-width:440px){
+    body{padding:0}
+    .phone{width:100%;height:100dvh;border-radius:0;box-shadow:none}
+    .notch,.page-title,.page-sub,.legend{display:none}
+  }
+  @media (prefers-reduced-motion:reduce){
+    *{animation:none!important;transition:none!important}
+  }
+</style>
+</head>
+<body>
+  <!-- 统一图标集 -->
+  <svg width="0" height="0" style="position:absolute" aria-hidden="true">
+    <defs>
+      <g id="ic" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"></g>
+      <symbol id="i-home" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></symbol>
+      <symbol id="i-chart" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></symbol>
+      <symbol id="i-users" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></symbol>
+      <symbol id="i-msg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></symbol>
+      <symbol id="i-gear" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></symbol>
+      <symbol id="i-search" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></symbol>
+      <symbol id="i-back" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></symbol>
+      <symbol id="i-send" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></symbol>
+      <symbol id="i-dots" viewBox="0 0 24 24" fill="currentColor" stroke="none"><circle cx="12" cy="5" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="12" cy="19" r="1.6"/></symbol>
+      <symbol id="i-info" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></symbol>
+      <symbol id="i-warn" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></symbol>
+      <symbol id="i-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></symbol>
+      <symbol id="i-plus" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></symbol>
+      <symbol id="i-x" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></symbol>
+      <symbol id="i-refresh" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></symbol>
+    </defs>
+  </svg>
+
+  <p class="page-title">接入助手 · Android 界面预览 v2</p>
+  <p class="page-sub">重设计版：概览 / 会话 / 聊天 / 账号 + 新增统计页；含加载、空态、错误等状态演示</p>
+
+  <div class="phone">
+    <div class="notch"></div>
+    <div class="statusbar"><span>9:41</span><span class="right">5G ▮▮▮ 88%</span></div>
+
+    <div class="viewport" id="viewport">
+
+      <!-- ═══════════ 概览 ═══════════ -->
+      <section class="screen active" id="s-home" aria-label="概览">
+        <div class="head-row">
+          <div><h1>接入助手</h1><div class="sub">10 月 21 日 · 星期三</div></div>
+          <button class="icon-btn" aria-label="打开设置" onclick="go('settings')"><svg><use href="#i-gear"/></svg></button>
+        </div>
+
+        <div class="chips" style="margin-top:14px" role="group" aria-label="账号筛选">
+          <button class="chip" aria-pressed="false" onclick="pickChip(this)">全部账号</button>
+          <button class="chip" aria-pressed="true" onclick="pickChip(this)"><i class="dot"></i>演示账号</button>
+          <button class="chip" aria-pressed="false" onclick="pickChip(this)"><i class="dot off"></i>工作微信</button>
+          <button class="chip add" onclick="go('accounts')"><svg style="width:14px;height:14px"><use href="#i-plus"/></svg>新增</button>
+        </div>
+
+        <div class="card">
+          <div class="between">
+            <div class="grow">
+              <div class="row" style="gap:7px">
+                <span style="width:9px;height:9px;border-radius:50%;background:var(--green);flex:none" aria-hidden="true"></span>
+                <b style="font-size:15.5px">接入服务</b>
+                <span class="tag t-green">运行中</span>
+              </div>
+              <div class="meta" style="margin-top:5px">账号保持在线，收到的消息将自动回复</div>
+            </div>
+            <button class="sw" role="switch" aria-checked="true" aria-label="接入服务总开关" onclick="flip(this)"><span class="track"></span></button>
+          </div>
+          <div class="divider"></div>
+          <div class="stats">
+            <div class="stat"><b style="color:var(--green-text)">1/3</b><span>在线账号</span></div>
+            <div class="stat"><b>128</b><span>今日收到</span></div>
+            <div class="stat"><b>112</b><span>今日回复</span></div>
+            <div class="stat"><b style="font-size:19px">96.4%</b><span>回复成功率</span></div>
+          </div>
+        </div>
+
+        <div class="section"><h2>当前账号</h2><a href="javascript:go('accounts')">管理</a></div>
+        <div class="card">
+          <div class="row">
+            <div class="avatar av-qq">演</div>
+            <div class="grow">
+              <div class="row" style="gap:6px"><span class="name">演示账号</span><span class="tag t-blue">QQ</span></div>
+              <div class="row" style="margin-top:6px;gap:8px">
+                <span class="pill p-on"><i></i>在线</span>
+                <span class="meta">已在线 2 小时 14 分</span>
+              </div>
+            </div>
+            <button class="sw" role="switch" aria-checked="true" aria-label="演示账号接入开关" onclick="flip(this)"><span class="track"></span></button>
+          </div>
+          <div class="divider"></div>
+          <div class="stats">
+            <div class="stat"><b style="font-size:14px">本地演示</b><span>接入方式</span></div>
+            <div class="stat"><b style="font-size:14px">18 ms</b><span>心跳延迟</span></div>
+            <div class="stat"><b style="font-size:14px">128 / 112</b><span>今日收发</span></div>
+          </div>
+        </div>
+
+        <div class="section"><h2>最近消息</h2><a href="javascript:go('messages')">查看全部</a></div>
+        <div class="card plain">
+          <button class="conv" onclick="go('chat')">
+            <div class="avatar av-qq">林</div>
+            <div class="grow">
+              <div class="top"><b>林小满</b><span class="time">刚刚</span></div>
+              <div class="prev">这版方案我改了三处，你看下第三条会不会误伤正常聊天？</div>
+            </div>
+            <span class="badge" aria-label="2 条未读">2</span>
+          </button>
+          <div style="height:1px;background:var(--line);margin:0 12px"></div>
+          <button class="conv" onclick="go('chat')">
+            <div class="avatar av-qq">群</div>
+            <div class="grow">
+              <div class="top"><b>产品评审群</b><span class="tag t-gray">群</span><span class="time">12 分钟前</span></div>
+              <div class="prev">我来整理一下时间点</div>
+            </div>
+          </button>
+          <div style="height:1px;background:var(--line);margin:0 12px"></div>
+          <button class="conv" onclick="go('chat')">
+            <div class="avatar av-wx">陈</div>
+            <div class="grow">
+              <div class="top"><b>陈默</b><span class="time">昨天 21:04</span></div>
+              <div class="prev">那家新开的面馆要不要去试试</div>
+            </div>
+          </button>
+        </div>
+
+        <div class="banner b-info">
+          <svg aria-hidden="true"><use href="#i-info"/></svg>
+          <div><b>演示模式可用</b>「本地演示」账号不连接任何平台，按脚本模拟收发消息，可直接验证自动回复流程。</div>
+        </div>
+      </section>
+
+      <!-- ═══════════ 统计（新增） ═══════════ -->
+      <section class="screen" id="s-stats" aria-label="统计">
+        <h1>统计</h1>
+        <div class="sub">数据仅保存在本机，不上传任何服务器</div>
+
+        <div class="chips" style="margin-top:12px" role="group" aria-label="统计周期">
+          <button class="chip" aria-pressed="true" data-period="today" onclick="setPeriod(this)">今日</button>
+          <button class="chip" aria-pressed="false" data-period="d7" onclick="setPeriod(this)">近 7 日</button>
+          <button class="chip" aria-pressed="false" data-period="d30" onclick="setPeriod(this)">近 30 日</button>
+        </div>
+
+        <div class="card" id="sum-card">
+          <div class="stats" style="margin-top:0">
+            <div class="stat"><b id="sum-recv">128</b><span>收到</span></div>
+            <div class="stat"><b id="sum-sent">112</b><span>已回复</span></div>
+            <div class="stat"><b id="sum-rate">96.4%</b><span>成功率</span></div>
+            <div class="stat"><b id="sum-avg" style="font-size:16px">1.8 秒</b><span>平均响应</span></div>
+          </div>
+        </div>
+
+        <div class="card" id="chart-card">
+          <div class="between">
+            <b style="font-size:14px">消息量趋势</b>
+            <span class="meta" id="chart-caption">按小时</span>
+          </div>
+          <svg id="chart" viewBox="0 0 340 190" width="100%" style="margin-top:10px" role="img" aria-label="消息量柱状图，蓝色为收到，浅色为已回复"></svg>
+          <div class="chart-legend">
+            <span><i style="background:var(--blue)"></i>收到</span>
+            <span><i style="background:#B9C8F5"></i>已回复</span>
+          </div>
+        </div>
+
+        <div class="card">
+          <b style="font-size:14px">AI 回复质量</b>
+          <div class="row" style="margin-top:14px;gap:16px">
+            <svg width="92" height="92" viewBox="0 0 92 92" role="img" aria-label="回复成功率 96.4%">
+              <circle cx="46" cy="46" r="34" fill="none" stroke="var(--variant)" stroke-width="9"/>
+              <circle cx="46" cy="46" r="34" fill="none" stroke="var(--green)" stroke-width="9"
+                stroke-linecap="round" stroke-dasharray="205.9 213.6" transform="rotate(-90 46 46)"/>
+              <text x="46" y="44" text-anchor="middle" font-size="15" font-weight="600" fill="var(--text)">96.4%</text>
+              <text x="46" y="58" text-anchor="middle" font-size="9.5" fill="var(--muted)">成功率</text>
+            </svg>
+            <div class="grow">
+              <div class="quality-row" style="padding:6px 0;border-bottom:1px solid var(--line)">
+                <span>失败降级 <span class="meta">已发送系统提示</span></span><b>3 次</b>
+              </div>
+              <div class="quality-row" style="padding:6px 0;border-bottom:1px solid var(--line)">
+                <span>接口超时</span><b>1 次</b>
+              </div>
+              <div class="quality-row" style="padding:6px 0">
+                <span>被忽略词拦截</span><b>12 条</b>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <b style="font-size:14px">账号分布</b>
+          <div class="dist-row">
+            <div class="between"><span>演示账号</span><b style="font-size:12px">586 条</b></div>
+            <div class="dist-bar"><i style="width:81%"></i></div>
+          </div>
+          <div class="dist-row">
+            <div class="between"><span>备用小号（手机运行时）</span><b style="font-size:12px">139 条</b></div>
+            <div class="dist-bar"><i style="width:19%"></i></div>
+          </div>
+          <div class="dist-row">
+            <div class="between"><span>工作微信 <span class="tag t-gray">已停止</span></span><b style="font-size:12px">0 条</b></div>
+            <div class="dist-bar"><i style="width:2%;background:#C6CEE8"></i></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ═══════════ 账号 ═══════════ -->
+      <section class="screen" id="s-accounts" aria-label="账号">
+        <h1>账号</h1>
+        <div class="sub">共 3 个账号 · 2 个在线</div>
+
+        <button style="width:100%;margin-top:14px;min-height:48px;border:0;border-radius:14px;background:var(--blue);color:#fff;font-size:14px;font-weight:600;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:6px">
+          <svg style="width:16px;height:16px" aria-hidden="true"><use href="#i-plus"/></svg>新增账号
+        </button>
+
+        <div class="card">
+          <div class="row">
+            <div class="avatar av-qq">演</div>
+            <div class="grow">
+              <div class="row" style="gap:6px">
+                <span class="name">演示账号</span>
+                <span class="tag t-blue">当前</span>
+              </div>
+              <div class="row" style="margin-top:6px;gap:6px">
+                <span class="tag t-blue">QQ</span>
+                <span class="tag t-amber">本地演示</span>
+                <span class="pill p-on"><i></i>在线</span>
+              </div>
+            </div>
+            <button class="icon-btn sm" aria-label="演示账号更多操作"><svg><use href="#i-dots"/></svg></button>
+          </div>
+          <div class="divider"></div>
+          <div class="between">
+            <div>
+              <div style="font-size:13px;color:#4B5563">382719</div>
+              <div class="meta" style="margin-top:2px">最近活动 刚刚 · 已在线 2 小时 14 分</div>
+            </div>
+            <button class="sw" role="switch" aria-checked="true" aria-label="演示账号接入开关" onclick="flip(this)"><span class="track"></span></button>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="row">
+            <div class="avatar av-qq">备</div>
+            <div class="grow">
+              <div class="row" style="gap:6px">
+                <span class="name">备用小号</span>
+              </div>
+              <div class="row" style="margin-top:6px;gap:6px">
+                <span class="tag t-blue">QQ</span>
+                <span class="tag t-gray">手机运行时</span>
+                <span class="pill p-warn"><i></i>重连中</span>
+              </div>
+            </div>
+            <button class="icon-btn sm" aria-label="备用小号更多操作"><svg><use href="#i-dots"/></svg></button>
+          </div>
+          <div class="divider"></div>
+          <div class="between">
+            <div>
+              <div style="font-size:13px;color:#4B5563">1839204</div>
+              <div class="meta" style="margin-top:2px">第 3 次重连 · 退避 32 秒后重试</div>
+            </div>
+            <button class="sw" role="switch" aria-checked="true" disabled aria-label="备用小号接入开关，重连中暂不可操作"><span class="track"></span></button>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="row">
+            <div class="avatar av-wx">工</div>
+            <div class="grow">
+              <div class="name">工作微信</div>
+              <div class="row" style="margin-top:6px;gap:6px">
+                <span class="tag t-green">微信</span>
+                <span class="tag t-blue">OneBot Hook</span>
+                <span class="pill p-off"><i></i>已停止</span>
+              </div>
+            </div>
+            <button class="icon-btn sm" aria-label="工作微信更多操作"><svg><use href="#i-dots"/></svg></button>
+          </div>
+          <div class="divider"></div>
+          <div class="between">
+            <div>
+              <div style="font-size:13px;color:#4B5563">wxid_example_work01</div>
+              <div class="meta" style="margin-top:2px">上次在线 10 月 18 日 · 自动回复已开启</div>
+            </div>
+            <button class="sw" role="switch" aria-checked="false" aria-label="工作微信接入开关" onclick="flip(this)"><span class="track"></span></button>
+          </div>
+        </div>
+
+        <div class="banner b-warn">
+          <svg aria-hidden="true"><use href="#i-warn"/></svg>
+          <div><b>合规提示</b>请仅接入本人拥有合法使用权的账号，非官方协议接入存在登录受限风险。</div>
+        </div>
+      </section>
+
+      <!-- ═══════════ 消息 ═══════════ -->
+      <section class="screen" id="s-messages" aria-label="消息">
+        <h1>消息</h1>
+        <div class="sub" id="msg-count">共 4 个会话 · 2 条未读 · 仅看 演示账号</div>
+
+        <div style="margin-top:12px;position:relative">
+          <svg style="position:absolute;left:14px;top:50%;transform:translateY(-50%);width:15px;height:15px;color:#9AA1B0;pointer-events:none" aria-hidden="true"><use href="#i-search"/></svg>
+          <input id="msg-search" type="search" placeholder="搜索联系人或消息内容" aria-label="搜索联系人或消息内容"
+            style="width:100%;background:#fff;border:1px solid var(--outline);border-radius:12px;padding:0 14px 0 38px;font-size:13px;min-height:44px;color:var(--text)"
+            oninput="filterMsgs()">
+        </div>
+
+        <div class="chips" style="margin-top:10px" role="group" aria-label="会话筛选">
+          <button class="chip" aria-pressed="true" data-f="all" onclick="pickFilter(this)">全部</button>
+          <button class="chip" aria-pressed="false" data-f="unread" onclick="pickFilter(this)">未读</button>
+          <button class="chip" aria-pressed="false" data-f="group" onclick="pickFilter(this)">群聊</button>
+          <button class="chip" aria-pressed="false" data-f="private" onclick="pickFilter(this)">私聊</button>
+        </div>
+
+        <div class="card plain" id="conv-list">
+          <button class="conv" data-type="private" data-unread="2" data-name="林小满" onclick="go('chat')">
+            <div class="avatar av-qq">林</div>
+            <div class="grow">
+              <div class="top"><b>林小满</b><span class="time">刚刚</span></div>
+              <div class="prev">这版方案我改了三处，你看下第三条会不会误伤正常聊天？</div>
+            </div>
+            <span class="end"><span class="badge" aria-label="2 条未读">2</span></span>
+          </button>
+          <div style="height:1px;background:var(--line);margin:0 12px"></div>
+          <button class="conv" data-type="group" data-unread="0" data-name="产品评审群" onclick="go('chat')">
+            <div class="avatar av-qq">群</div>
+            <div class="grow">
+              <div class="top"><b>产品评审群</b><span class="tag t-gray">群</span><span class="time">12 分钟前</span></div>
+              <div class="prev">我来整理一下时间点，散会前发到群里。</div>
+            </div>
+            <span class="end"><span class="tag t-blue">QQ</span></span>
+          </button>
+          <div style="height:1px;background:var(--line);margin:0 12px"></div>
+          <button class="conv" data-type="private" data-unread="0" data-name="陈默" onclick="go('chat')">
+            <div class="avatar av-wx">陈</div>
+            <div class="grow">
+              <div class="top"><b>陈默</b><span class="time">昨天 21:04</span></div>
+              <div class="prev">那家新开的面馆要不要去试试</div>
+            </div>
+            <span class="end"><span class="tag t-green">微信</span></span>
+          </button>
+          <div style="height:1px;background:var(--line);margin:0 12px"></div>
+          <button class="conv" data-type="private" data-unread="0" data-name="阿岚" onclick="go('chat')">
+            <div class="avatar av-qq">阿</div>
+            <div class="grow">
+              <div class="top"><b>阿岚</b><span class="time">10-18</span></div>
+              <div class="prev">改天请你喝咖啡，谢啦</div>
+            </div>
+            <span class="end"><span class="tag t-blue">QQ</span></span>
+          </button>
+        </div>
+
+        <div class="card empty" id="empty-msgs" style="display:none" role="status">
+          <svg aria-hidden="true"><use href="#i-search"/></svg>
+          <b>没有匹配的会话</b>
+          试试更换关键词，或清除筛选条件。
+          <div style="margin-top:12px"><button class="link" onclick="clearFilter()">清除筛选</button></div>
+        </div>
+      </section>
+
+      <!-- ═══════════ 聊天 ═══════════ -->
+      <section class="screen" id="s-chat" aria-label="聊天">
+        <div class="chat-head">
+          <button class="icon-btn sm" aria-label="返回会话列表" onclick="go('messages')"><svg><use href="#i-back"/></svg></button>
+          <div class="avatar av-qq">林</div>
+          <div class="grow">
+            <div style="font-size:15px;font-weight:600">林小满</div>
+            <div class="meta" style="display:flex;align-items:center;gap:5px;margin-top:1px">
+              <span style="width:6px;height:6px;border-radius:50%;background:var(--green);flex:none" aria-hidden="true"></span>私聊 · 演示账号
+            </div>
+          </div>
+          <button class="icon-btn sm" aria-label="会话更多操作"><svg><use href="#i-dots"/></svg></button>
+        </div>
+
+        <div class="between" style="padding:2px 2px 6px">
+          <span class="meta">该会话自动回复</span>
+          <button class="sw" role="switch" aria-checked="true" aria-label="本会话自动回复开关" onclick="flip(this)"><span class="track"></span></button>
+        </div>
+
+        <div class="chat-body" id="chat-body">
+          <div class="stamp">今天 20:52</div>
+          <div class="msg"><div class="avatar av-qq">林</div><div class="bubble">在吗？</div></div>
+          <div class="msg out"><div class="bubble">在的，刚看到消息。<span class="ai-tag">AI</span></div></div>
+          <div class="msg"><div class="avatar av-qq">林</div><div class="bubble">下午的评审你还参加吗</div></div>
+          <div class="msg out"><div class="bubble">我这会儿有点事，等下回你。<span class="ai-tag">AI</span></div></div>
+          <div class="stamp">今天 21:03</div>
+          <div class="msg"><div class="avatar av-qq">林</div><div class="bubble">这版方案我改了三处：一、把灰度范围从 5% 收窄到 2%，先观察一周崩溃率和投诉量；二、回复延迟从固定 3 秒改成 1–8 秒随机，更像真人节奏；三、忽略了所有带「广告」两个字的消息。你看下第三条会不会误伤正常聊天？</div></div>
+          <div class="msg out"><div class="bubble">收到，我先记下来了。<span class="ai-tag">AI</span></div></div>
+          <div class="msg-fail" role="alert">
+            <svg aria-hidden="true"><use href="#i-warn"/></svg>
+            <span>一条回复失败（接口超时），已发送降级提示</span>
+            <button class="link" style="color:var(--red-text)">重试</button>
+          </div>
+        </div>
+
+        <div class="inputbar">
+          <input class="field" id="chat-input" type="text" placeholder="输入消息…" aria-label="输入消息" oninput="syncSend()" onkeydown="if(event.key==='Enter')sendMsg()">
+          <button class="send" id="send-btn" aria-label="发送消息" disabled onclick="sendMsg()"><svg><use href="#i-send"/></svg></button>
+        </div>
+      </section>
+
+      <!-- ═══════════ 设置 ═══════════ -->
+      <section class="screen" id="s-settings" aria-label="设置">
+        <h1>设置</h1>
+
+        <div class="card" style="margin-top:12px">
+          <div class="between">
+            <div class="grow">
+              <div style="font-size:15px;font-weight:600">接入服务</div>
+              <div class="meta" style="margin-top:3px">前台服务运行中，退出应用仍保持在线</div>
+            </div>
+            <button class="sw" role="switch" aria-checked="true" aria-label="接入服务总开关" onclick="flip(this)"><span class="track"></span></button>
+          </div>
+        </div>
+
+        <div class="section"><h2>配置</h2></div>
+        <div class="card">
+          <button class="settings-row" style="width:100%;background:none;border:0;text-align:left;cursor:pointer;color:var(--text)">
+            <div class="grow"><b>AI 服务</b><span>已配置 2 个（内置模拟回复始终可用）</span></div>
+            <svg style="width:16px;height:16px;color:#B6BCC9" aria-hidden="true"><use href="#i-chev"/></svg>
+          </button>
+          <div class="divider" style="margin:0"></div>
+          <button class="settings-row" style="width:100%;background:none;border:0;text-align:left;cursor:pointer;color:var(--text)">
+            <div class="grow"><b>账号管理</b><span>共 3 个账号，2 个参与接入</span></div>
+            <svg style="width:16px;height:16px;color:#B6BCC9" aria-hidden="true"><use href="#i-chev"/></svg>
+          </button>
+        </div>
+
+        <div class="section"><h2>数据</h2></div>
+        <div class="card">
+          <div class="settings-row">
+            <div class="grow"><b>消息记录</b><span>本地共保存 1,286 条消息</span></div>
+            <span class="meta">Room 本地库</span>
+          </div>
+          <div class="divider" style="margin:0"></div>
+          <div class="settings-row">
+            <div class="grow"><b>清空全部聊天记录</b><span>只删除消息，不影响账号与 AI 配置</span></div>
+            <button style="border:0;background:none;color:var(--red);font-size:13px;font-weight:600;cursor:pointer;padding:8px;min-height:44px">清空</button>
+          </div>
+        </div>
+
+        <div class="section"><h2>关于</h2></div>
+        <div class="card">
+          <div class="settings-row">
+            <div class="grow"><b>版本</b></div><span class="meta">v1.0.17</span>
+          </div>
+          <div class="divider" style="margin:0"></div>
+          <div class="settings-row">
+            <div class="grow"><b>接入协议与合规说明</b><span>非官方协议的风险提示与使用边界</span></div>
+            <svg style="width:16px;height:16px;color:#B6BCC9" aria-hidden="true"><use href="#i-chev"/></svg>
+          </div>
+        </div>
+
+        <div class="banner b-warn">
+          <svg aria-hidden="true"><use href="#i-warn"/></svg>
+          <div><b>合规使用提示</b>请仅接入你本人拥有合法使用权的账号，并遵守平台用户协议。通过非官方协议接入 QQ / 微信 存在被限制登录的风险，建议使用小号或独立设备测试。</div>
+        </div>
+
+        <div class="foot">接入助手 · 本地数据不上传 · 仅用于个人学习与自建服务</div>
+      </section>
+
+    </div>
+
+    <div class="nav" id="nav">
+      <button class="on" data-tab="home" onclick="go('home')"><span class="ico"><svg><use href="#i-home"/></svg></span>概览</button>
+      <button data-tab="messages" onclick="go('messages')"><span class="ico"><svg><use href="#i-msg"/></svg></span>消息</button>
+      <button data-tab="stats" onclick="go('stats')"><span class="ico"><svg><use href="#i-chart"/></svg></span>统计</button>
+      <button data-tab="accounts" onclick="go('accounts')"><span class="ico"><svg><use href="#i-users"/></svg></span>账号</button>
+      <button data-tab="settings" onclick="go('settings')"><span class="ico"><svg><use href="#i-gear"/></svg></span>设置</button>
+    </div>
+    <div class="homebar"></div>
+  </div>
+
+  <div class="legend">
+    v2 重设计：统一 SVG 图标集 · 状态不单靠颜色（文字标签） · 可点区域 ≥ 44px · 空态 / 加载 / 错误状态演示<br />
+    试试：统计页切换周期（加载骨架）、消息页筛选到空态、聊天页输入后发送。<br />
+    技术实现：<code>Kotlin</code> · <code>Jetpack Compose</code> · <code>Material 3</code> · <code>Room</code> · <code>OkHttp WebSocket</code>
+  </div>
+
+<script>
+  /* ── 导航 ── */
+  var TABS = ['home','messages','stats','accounts','settings'];
+  function go(name){
+    document.querySelectorAll('.screen').forEach(function(el){ el.classList.remove('active'); });
+    var target = document.getElementById('s-' + name);
+    if (target) target.classList.add('active');
+    document.getElementById('viewport').scrollTop = 0;
+    var isTab = TABS.indexOf(name) >= 0;
+    document.getElementById('nav').style.visibility = isTab ? 'visible' : 'hidden';
+    document.querySelectorAll('#nav button').forEach(function(btn){
+      btn.classList.toggle('on', btn.dataset.tab === name);
+    });
+  }
+
+  /* ── 开关（role=switch，键盘 Enter/Space 原生支持）── */
+  function flip(el){
+    if (el.disabled) return;
+    el.setAttribute('aria-checked', el.getAttribute('aria-checked') !== 'true');
+  }
+
+  /* ── chips（概览账号筛选）── */
+  function pickChip(el){
+    var parent = el.parentElement;
+    parent.querySelectorAll('.chip').forEach(function(c){ c.setAttribute('aria-pressed','false'); });
+    if (!el.classList.contains('add')) el.setAttribute('aria-pressed','true');
+  }
+
+  /* ── 统计页：周期切换 + 骨架加载 ── */
+  var PERIODS = {
+    today:{
+      caption:'按小时', labels:['0','4','8','12','16','20','23'],
+      recv:[0,0,0,0,2,6,14,22,9,12,8,15,11,7,10,13,6,4,9,18,14,8,5,2],
+      sent:[0,0,0,0,2,6,13,21,9,11,8,14,10,7,9,12,6,4,9,17,13,7,4,2],
+      recv_sum:128, sent_sum:112, rate:'96.4%', avg:'1.8 秒'
+    },
+    d7:{
+      caption:'按天', labels:['周三','周四','周五','周六','周日','周一','昨天'],
+      recv:[86,102,95,74,88,140,128], sent:[80,96,89,70,83,131,112],
+      recv_sum:796, sent_sum:725, rate:'95.8%', avg:'1.9 秒'
+    },
+    d30:{
+      caption:'按天', labels:['09-22','09-26','09-30','10-04','10-08','10-12','10-16','10-21'],
+      recv:[92,88,104,71,0,96,113,85,90,102,88,76,84,110,98,105,92,80,86,120,135,118,97,84,90,108,126,140,131,128],
+      sent:[86,83,98,66,0,90,106,80,85,96,83,71,79,104,93,99,87,76,81,113,128,111,92,79,85,101,118,131,123,112],
+      recv_sum:3241, sent_sum:2968, rate:'95.1%', avg:'2.1 秒'
+    }
+  };
+
+  function drawChart(p){
+    var svg = document.getElementById('chart');
+    var W = 340, H = 190, padL = 6, padB = 22, padT = 12;
+    var plotH = H - padB - padT, n = p.recv.length;
+    var max = Math.max.apply(null, p.recv) || 1;
+    var step = (W - padL * 2) / n;
+    var s = '';
+    /* 网格线 + 刻度 */
+    [1, .5, 0].forEach(function(f){
+      var y = padT + plotH * (1 - f);
+      s += '<line x1="' + padL + '" y1="' + y + '" x2="' + (W - padL) + '" y2="' + y + '" stroke="#EEF0F6" stroke-width="1"/>';
+      s += '<text x="' + (W - padL) + '" y="' + (y - 3) + '" text-anchor="end" font-size="8" fill="#9AA1B0">' + Math.round(max * f) + '</text>';
+    });
+    var bw = n > 10 ? 3 : 10, gap = n > 10 ? 1.5 : 4;
+    for (var i = 0; i < n; i++){
+      var cx = padL + step * i + step / 2;
+      var hR = plotH * (p.recv[i] / max), hS = plotH * (p.sent[i] / max);
+      var xR = n > 10 ? cx - bw : cx - bw - gap / 2;
+      var xS = n > 10 ? cx - bw : cx + gap / 2;
+      s += '<rect x="' + xR.toFixed(1) + '" y="' + (padT + plotH - hR).toFixed(1) + '" width="' + bw + '" height="' + Math.max(hR, 1).toFixed(1) + '" rx="1.5" fill="#2E5BFF"><title>收到 ' + p.recv[i] + ' 条</title></rect>';
+      s += '<rect x="' + xS.toFixed(1) + '" y="' + (padT + plotH - hS).toFixed(1) + '" width="' + bw + '" height="' + Math.max(hS, 1).toFixed(1) + '" rx="1.5" fill="#B9C8F5"><title>回复 ' + p.sent[i] + ' 条</title></rect>';
+    }
+    /* 横轴标签：最多显示 8 个 */
+    var every = Math.ceil(n / 8);
+    for (var j = 0; j < n; j++){
+      if (j % every !== 0 && j !== n - 1) continue;
+      var lb = p.labels[j] !== undefined ? p.labels[j] : '';
+      if (!lb) continue;
+      var lx = padL + step * j + step / 2;
+      s += '<text x="' + lx.toFixed(1) + '" y="' + (H - 6) + '" text-anchor="middle" font-size="9" fill="#6B7280">' + lb + '</text>';
+    }
+    svg.innerHTML = s;
+  }
+
+  function setPeriod(el){
+    var parent = el.parentElement;
+    parent.querySelectorAll('.chip').forEach(function(c){ c.setAttribute('aria-pressed','false'); });
+    el.setAttribute('aria-pressed','true');
+    var p = PERIODS[el.dataset.period];
+    ['sum-card','chart-card'].forEach(function(id){ document.getElementById(id).classList.add('loading'); });
+    setTimeout(function(){
+      document.getElementById('sum-recv').textContent = p.recv_sum;
+      document.getElementById('sum-sent').textContent = p.sent_sum;
+      document.getElementById('sum-rate').textContent = p.rate;
+      document.getElementById('sum-avg').textContent = p.avg;
+      document.getElementById('chart-caption').textContent = p.caption;
+      drawChart(p);
+      ['sum-card','chart-card'].forEach(function(id){ document.getElementById(id).classList.remove('loading'); });
+    }, 550);
+  }
+  drawChart(PERIODS.today);
+
+  /* ── 消息页：筛选 + 搜索 + 空态 ── */
+  var curFilter = 'all';
+  function pickFilter(el){
+    el.parentElement.querySelectorAll('.chip').forEach(function(c){ c.setAttribute('aria-pressed','false'); });
+    el.setAttribute('aria-pressed','true');
+    curFilter = el.dataset.f;
+    filterMsgs();
+  }
+  function filterMsgs(){
+    var q = document.getElementById('msg-search').value.trim().toLowerCase();
+    var shown = 0;
+    document.querySelectorAll('#conv-list .conv').forEach(function(row){
+      var okF = curFilter === 'all'
+        || (curFilter === 'unread' && row.dataset.unread !== '0')
+        || row.dataset.type === curFilter;
+      var okQ = !q || row.dataset.name.toLowerCase().indexOf(q) >= 0 || row.querySelector('.prev').textContent.toLowerCase().indexOf(q) >= 0;
+      var show = okF && okQ;
+      row.style.display = show ? '' : 'none';
+      if (show) shown++;
+      var hr = row.nextElementSibling;
+      if (hr && hr.tagName === 'DIV') hr.style.display = (show && shown > 1) ? '' : 'none';
+    });
+    document.getElementById('empty-msgs').style.display = shown ? 'none' : '';
+    document.getElementById('conv-list').style.display = shown ? '' : 'none';
+  }
+  function clearFilter(){
+    document.getElementById('msg-search').value = '';
+    curFilter = 'all';
+    document.querySelectorAll('#s-messages .chip').forEach(function(c){
+      c.setAttribute('aria-pressed', c.dataset.f === 'all' ? 'true' : 'false');
+    });
+    filterMsgs();
+  }
+
+  /* ── 聊天页：发送 ── */
+  function syncSend(){
+    document.getElementById('send-btn').disabled = !document.getElementById('chat-input').value.trim();
+  }
+  function sendMsg(){
+    var input = document.getElementById('chat-input');
+    var text = input.value.trim();
+    if (!text) return;
+    var body = document.getElementById('chat-body');
+    var div = document.createElement('div');
+    div.className = 'msg out';
+    var b = document.createElement('div');
+    b.className = 'bubble';
+    b.textContent = text;
+    div.appendChild(b);
+    body.appendChild(div);
+    input.value = '';
+    syncSend();
+    body.scrollIntoView(false);
+  }
+</script>
+</body>
+</html>

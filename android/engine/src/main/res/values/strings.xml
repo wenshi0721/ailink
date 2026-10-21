@@ -1,0 +1,5 @@
+<resources>
+    <!-- 通知通道文案：只在 :engine 的 NotificationHelper 中使用 -->
+    <string name="channel_engine_name">账号接入服务</string>
+    <string name="channel_engine_desc">保持 QQ / 微信 账号在线并自动回复消息</string>
+</resources>
