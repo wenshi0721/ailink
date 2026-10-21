@@ -26,4 +26,6 @@ android {
 dependencies {
     // AppPrefs / SessionLog / PairingBus 用 StateFlow + SharedFlow
     implementation(libs.kotlinx.coroutines.android)
+
+    testImplementation(libs.junit)
 }

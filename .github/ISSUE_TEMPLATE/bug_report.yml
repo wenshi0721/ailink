@@ -1,0 +1,64 @@
+name: Bug 报告
+description: 报告 AiLink 的问题。安全漏洞请勿在此提交，见 SECURITY.md。
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        提交前请先搜索现有 issue 避免重复。
+        **涉及安全漏洞（如 token 泄露、数据外传）请使用 Security 标签页的私密报告，不要公开描述细节。**
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: 发生了什么
+      description: 同时描述你预期的行为。
+      placeholder: 简明描述问题现象
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: 复现步骤
+      placeholder: |
+        1. 打开 …
+        2. 点击 …
+        3. 出现 …
+    validations:
+      required: true
+  - type: dropdown
+    id: mode
+    attributes:
+      label: 使用场景
+      options:
+        - 演示模式（内置模拟回复）
+        - OneBot v11 桥接端（NapCat / LLOneBot / Lagrange 等，电脑运行）
+        - 手机内置 QQ 运行时（proot 容器）
+        - 其他
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: 版本信息
+      description: App 设置页顶部会显示「App x.y.z(code) · 运行时脚本 vN」
+      placeholder: 例如 App 1.0.18(19) · 运行时脚本 v7
+    validations:
+      required: true
+  - type: input
+    id: device
+    attributes:
+      label: 设备与系统
+      placeholder: 例如 Redmi K60 / Android 14；桥接端场景请附 QQ 与 NapCat 版本
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: 日志
+      description: 设置 → 手机内置运行时 → 导出日志；或桥接端日志。**发布前请脱敏其中的号码、令牌与 wxid。**
+      render: shell
+  - type: textarea
+    id: extra
+    attributes:
+      label: 补充信息
+      description: 截图（注意脱敏）等
