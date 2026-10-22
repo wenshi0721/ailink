@@ -7,6 +7,7 @@ import com.jiuguan.ailink.data.repo.AccountRepository
 import com.jiuguan.ailink.data.repo.AiRepository
 import com.jiuguan.ailink.data.repo.MessageRepository
 import com.jiuguan.ailink.data.repo.SeedData
+import com.jiuguan.ailink.data.update.UpdateRepository
 import com.jiuguan.ailink.engine.bot.BotManager
 import com.jiuguan.ailink.engine.service.BotService
 import kotlinx.coroutines.CoroutineScope
@@ -31,6 +32,7 @@ class AppContainer(context: Context) {
     val aiRepository = AiRepository(database.aiProfileDao(), database.accountDao())
     val messageRepository = MessageRepository(database.conversationDao(), database.messageDao())
     val aiClient = AiClient()
+    val updateRepository = UpdateRepository(appContext, prefs)
 
     val botManager = BotManager(
         context = appContext,
@@ -51,5 +53,7 @@ class AppContainer(context: Context) {
                 BotService.start(appContext)
             }
         }
+        // 启动时静默检查应用更新（内部 6 小时节流，不打扰用户）
+        appScope.launch { runCatching { updateRepository.maybeAutoCheck() } }
     }
 }

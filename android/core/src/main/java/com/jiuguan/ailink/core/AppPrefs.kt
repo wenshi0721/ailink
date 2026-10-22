@@ -51,10 +51,27 @@ class AppPrefs(context: Context) {
         _permissionAsked.value = true
     }
 
+    private val _updateMirrorBase = MutableStateFlow(sp.getString(KEY_UPDATE_MIRROR, "").orEmpty())
+    /** 应用更新下载的镜像前缀（如 `https://gh-proxy.com/`）；空串 = 直连 GitHub。 */
+    val updateMirrorBase: StateFlow<String> = _updateMirrorBase.asStateFlow()
+
+    fun setUpdateMirrorBase(base: String) {
+        val clean = base.trim()
+        sp.edit().putString(KEY_UPDATE_MIRROR, clean).apply()
+        _updateMirrorBase.value = clean
+    }
+
+    /** 上次成功检查更新的时间戳（毫秒），用于启动静默检查的节流。 */
+    var lastUpdateCheck: Long
+        get() = sp.getLong(KEY_LAST_UPDATE_CHECK, 0L)
+        set(value) = sp.edit().putLong(KEY_LAST_UPDATE_CHECK, value).apply()
+
     private companion object {
         const val KEY_ACTIVE_ACCOUNT = "active_account_id"
         const val KEY_QQ_UIN = "qq_uin"
         const val KEY_ENGINE_RUNNING = "engine_running"
         const val KEY_NOTIFY_ASKED = "notification_asked"
+        const val KEY_UPDATE_MIRROR = "update_mirror_base"
+        const val KEY_LAST_UPDATE_CHECK = "last_update_check"
     }
 }

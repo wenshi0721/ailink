@@ -3,6 +3,8 @@ plugins {
     alias(libs.plugins.kotlin.android)
 }
 
+import java.util.Properties
+
 /**
  * 把工作区级的容器安装脚本同步进 assets，作为 APK 内的唯一副本。
  *
@@ -35,6 +37,15 @@ abstract class SyncContainerScript : DefaultTask() {
 
 // :app —— 应用壳：Application 入口、AndroidManifest、assets（rootfs / NapCat / 容器脚本）、
 // jniLibs（proot 系列）、APK 打包配置。业务代码全部在下面的库里。
+
+// 正式签名属性：密钥与密码放在工作区 keystore/（已 gitignore）。
+// 文件不存在时 release 退化为未签名构建（CI 上只出 debug 包，不受影响）。
+// 注意：KTS 里 Gradle 的 `java` 扩展访问器会遮蔽 java.* 包名，须经 import 引入 Properties。
+val signingProps = Properties().apply {
+    val f = rootProject.file("../keystore/signing.properties")
+    if (f.exists()) f.inputStream().use { load(it) }
+}
+
 android {
     namespace = "com.jiuguan.ailink"
     compileSdk = 34
@@ -43,8 +54,20 @@ android {
         applicationId = "com.jiuguan.ailink"
         minSdk = 24
         targetSdk = 34
-        versionCode = 19
-        versionName = "1.0.18"
+        versionCode = 20
+        versionName = "1.1.0"
+    }
+
+    // 正式签名：见文件顶部 signingProps 的说明
+    signingConfigs {
+        create("release") {
+            if (signingProps.isNotEmpty()) {
+                storeFile = rootProject.file("../keystore/${signingProps.getProperty("storeFile")}")
+                storePassword = signingProps.getProperty("storePassword")
+                keyAlias = signingProps.getProperty("keyAlias")
+                keyPassword = signingProps.getProperty("keyPassword")
+            }
+        }
     }
 
     buildTypes {
@@ -60,6 +83,9 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
+            if (signingProps.isNotEmpty()) {
+                signingConfig = signingConfigs.getByName("release")
+            }
         }
     }
 
@@ -113,6 +139,9 @@ dependencies {
     // 依赖方向（单向）：:app -> :ui -> :assembly -> { :data, :engine } -> :core
     implementation(project(":ui"))
     implementation(project(":assembly"))
+
+    // Manifest 中的 FileProvider 来自 androidx.core
+    implementation(libs.androidx.core.ktx)
 
     // 应用壳自身不写业务代码，因此不直接引入 compose / room / okhttp，
     // 这些依赖由各自的模块携带，避免版本在两个地方漂移。

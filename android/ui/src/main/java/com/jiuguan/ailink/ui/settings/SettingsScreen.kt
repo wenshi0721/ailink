@@ -14,7 +14,9 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.KeyboardArrowRight
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
@@ -26,6 +28,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavController
@@ -40,6 +43,7 @@ import com.jiuguan.ailink.ui.common.appSwitchColors
 import com.jiuguan.ailink.ui.common.appViewModel
 import com.jiuguan.ailink.ui.theme.DangerRed
 import com.jiuguan.ailink.ui.theme.OnlineGreen
+import com.jiuguan.ailink.data.update.UpdateState
 
 @Composable
 fun SettingsScreen(
@@ -50,9 +54,13 @@ fun SettingsScreen(
     val accounts by vm.accounts.collectAsStateWithLifecycle()
     val profiles by vm.aiProfiles.collectAsStateWithLifecycle()
     val totalMessages by vm.totalMessages.collectAsStateWithLifecycle()
+    val updateState by vm.updateState.collectAsStateWithLifecycle()
+    val updateMirror by vm.updateMirror.collectAsStateWithLifecycle()
 
+    val context = LocalContext.current
     var confirmClear by remember { mutableStateOf(false) }
     var showAbout by remember { mutableStateOf(false) }
+    var showMirror by remember { mutableStateOf(false) }
 
     Column(
         modifier = Modifier
@@ -152,6 +160,21 @@ fun SettingsScreen(
                 trailing = { MutedText("v${vm.versionName}") }
             )
             SoftDivider()
+            UpdateRow(
+                state = updateState,
+                onCheck = vm::checkUpdate,
+                onDownload = vm::downloadUpdate,
+                onInstall = { file -> AppUpdateInstaller.install(context, file) }
+            )
+            SoftDivider()
+            SettingRow(
+                title = "下载加速镜像（可选）",
+                subtitle = if (updateMirror.isBlank()) "未设置，直连 GitHub；国内网络慢时可填加速前缀"
+                else updateMirror,
+                onClick = { showMirror = true },
+                trailing = { Chevron() }
+            )
+            SoftDivider()
             SettingRow(
                 title = "接入协议与合规说明",
                 subtitle = "非官方协议的风险提示与使用边界",
@@ -221,6 +244,37 @@ fun SettingsScreen(
             }
         )
     }
+
+    if (showMirror) {
+        var mirrorInput by remember { mutableStateOf(updateMirror) }
+        AlertDialog(
+            onDismissRequest = { showMirror = false },
+            title = { Text("下载加速镜像") },
+            text = {
+                Column {
+                    MutedText("GitHub Releases 直连较慢时，可填加速镜像前缀，例如：")
+                    Spacer(Modifier.height(4.dp))
+                    MutedText("https://gh-proxy.com/")
+                    Spacer(Modifier.height(10.dp))
+                    OutlinedTextField(
+                        value = mirrorInput,
+                        onValueChange = { mirrorInput = it },
+                        singleLine = true,
+                        placeholder = { Text("留空 = 直连 GitHub") }
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    vm.setUpdateMirror(mirrorInput)
+                    showMirror = false
+                }) { Text("保存") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showMirror = false }) { Text("取消") }
+            }
+        )
+    }
 }
 
 @Composable
@@ -230,4 +284,73 @@ private fun Chevron() {
         contentDescription = null,
         tint = MaterialTheme.colorScheme.onSurfaceVariant
     )
+}
+
+/** 检查更新行：随 [UpdateState] 切换文案与点击行为。 */
+@Composable
+private fun UpdateRow(
+    state: UpdateState,
+    onCheck: () -> Unit,
+    onDownload: (com.jiuguan.ailink.data.update.UpdateInfo) -> Unit,
+    onInstall: (java.io.File) -> Boolean
+) {
+    when (state) {
+        is UpdateState.Checking -> SettingRow(
+            title = "检查更新",
+            subtitle = "正在连接 GitHub Releases…",
+            trailing = { MutedText("…") }
+        )
+
+        is UpdateState.UpToDate -> SettingRow(
+            title = "检查更新",
+            subtitle = "当前已是最新版本",
+            onClick = onCheck,
+            trailing = { Text("检查", color = OnlineGreen, style = MaterialTheme.typography.bodyMedium) }
+        )
+
+        is UpdateState.Available -> SettingRow(
+            title = "发现新版本 v${state.info.version}",
+            subtitle = "点击下载更新包（约 ${state.info.apkSizeBytes / 1024 / 1024} MB）",
+            onClick = { onDownload(state.info) },
+            trailing = { Text("下载", color = OnlineGreen, style = MaterialTheme.typography.bodyMedium) }
+        )
+
+        is UpdateState.Downloading -> {
+            Column {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("下载更新 v${state.info.version}", style = MaterialTheme.typography.titleMedium)
+                        Spacer(Modifier.height(3.dp))
+                        MutedText("下载中 ${state.percent}%")
+                    }
+                }
+                Spacer(Modifier.height(10.dp))
+                LinearProgressIndicator(
+                    progress = { state.percent / 100f },
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
+        }
+
+        is UpdateState.Downloaded -> SettingRow(
+            title = "更新包已就绪 v${state.info.version}",
+            subtitle = "点击交给系统安装器安装（安装后应用会自动重启）",
+            onClick = { onInstall(state.file) },
+            trailing = { Text("安装", color = OnlineGreen, style = MaterialTheme.typography.bodyMedium) }
+        )
+
+        is UpdateState.Failed -> SettingRow(
+            title = "检查更新",
+            subtitle = "失败：${state.message}（可配置镜像后重试）",
+            onClick = onCheck,
+            trailing = { Text("重试", color = DangerRed, style = MaterialTheme.typography.bodyMedium) }
+        )
+
+        is UpdateState.Idle -> SettingRow(
+            title = "检查更新",
+            subtitle = "从 GitHub Releases 检查新版本",
+            onClick = onCheck,
+            trailing = { Text("检查", color = OnlineGreen, style = MaterialTheme.typography.bodyMedium) }
+        )
+    }
 }

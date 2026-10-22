@@ -23,6 +23,6 @@ object AppVersion {
             context.packageManager.getPackageInfo(context.packageName, 0).versionCode
         }.getOrNull() ?: 0
 
-    /** 形如 `1.0.17(18)`，用于界面与安装日志的版本标识。 */
+    /** 形如 `1.1.0(20)`，用于界面与安装日志的版本标识。 */
     fun label(context: Context): String = "${name(context)}(${code(context)})"
 }

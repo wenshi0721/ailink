@@ -24,6 +24,9 @@ local.properties
 *.keystore
 *.jks
 
+# 应用签名密钥与密码（本地文件，绝不入库）
+/keystore/
+
 # ---------- 第三方二进制与安装包（约 922 MB） ----------
 # NapCat Shell 分发包：含 node.exe / dll / node_modules，且内部保存登录后的
 # onebot11_<QQ号>.json（含令牌），整目录不入库；需要时从 vendor/ 的 zip 重新解压。
