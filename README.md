@@ -55,7 +55,7 @@ adb install -r app/build/outputs/apk/debug/app-debug.apk
 ### 4. 配置 AI 服务
 
 - **快速配置（推荐）**：App → AI 服务 → 新增，在「快速配置」里点选厂商（DeepSeek、通义千问、Kimi、智谱 GLM、豆包方舟、硅基流动、腾讯混元、OpenAI、Ollama 本地），接口地址与常用模型自动填好，只需再粘贴该厂商控制台签发的 API Key；
-- **手动配置**：也可直接填接口地址（如 `https://api.deepseek.com/v1`）、密钥、模型名（如 `deepseek-chat`）；
+- **手动配置**：也可直接填接口地址（如 `https://api.deepseek.com/v1`）、密钥、模型名（如 `deepseek-flash`）；
 - 兼容所有 OpenAI Chat Completions 风格接口；接口地址留空 = 使用内置模拟回复；
 - **图片识别（可选）**：配置页「图片识别」开关打开后，应用会先按模型名判断、再用一张测试图实测当前接口能否识图；确认支持时，聊天里的图片与表情包会先下载并转成 JPEG 再交给模型理解，不支持或关闭时仍按 `[图片]` 纯文本处理；
 - 账号编辑页可设置人设与回复延迟，AI 服务页可调整温度与最大 Token。

@@ -98,6 +98,7 @@ class AiProfileEditViewModel(
                 form = AiForm.preset()
             }
             refreshVisionStatus()
+            autoDetectIfNeeded()
         }
     }
 
@@ -106,18 +107,39 @@ class AiProfileEditViewModel(
         visionStatus = container.visionProbe.cached(toEntity(form))
     }
 
+    /**
+     * 结论未知时在后台补一次检测：用户打开配置页几秒后就能看到真实结果，
+     * 不必先点「测试调用」。结论（含 UNKNOWN）会入缓存，不会反复触发。
+     */
+    private fun autoDetectIfNeeded() {
+        val current = form
+        if (!current.visionEnabled || current.baseUrl.isBlank()) return
+        if (visionStatus != VisionSupport.UNKNOWN) return
+        visionChecking = true
+        viewModelScope.launch {
+            visionStatus = container.visionProbe.detect(toEntity(current))
+            visionChecking = false
+        }
+    }
+
     fun setVisionEnabled(enabled: Boolean) {
         update { it.copy(visionEnabled = enabled) }
         if (!enabled) {
             visionStatus = VisionSupport.UNSUPPORTED
         } else {
             refreshVisionStatus()
+            autoDetectIfNeeded()
         }
     }
 
     fun update(transform: (AiForm) -> AiForm) {
+        val before = form
         form = transform(form)
         if (error.isNotBlank()) error = ""
+        // 改了地址或模型名，旧结论立即作废：界面不能出现「显示支持、实际已换模型」的错位
+        if (before.model != form.model || before.baseUrl != form.baseUrl) {
+            refreshVisionStatus()
+        }
     }
 
     /**

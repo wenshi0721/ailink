@@ -130,7 +130,7 @@ fun AiProfileEditScreen(
                     label = "模型名称",
                     value = form.model,
                     onValueChange = { v -> vm.update { it.copy(model = v) } },
-                    placeholder = "deepseek-chat / gpt-4o-mini / qwen-plus"
+                    placeholder = "deepseek-flash / gpt-4o-mini / qwen-plus"
                 )
             }
 

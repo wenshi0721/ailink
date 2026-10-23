@@ -117,7 +117,7 @@ node bridge/scripts/test-onebot.mjs ws://127.0.0.1:3001 <token>
 
 保存前点 **测试连接**，返回成功后回概览页打开「接入服务」总开关，账号状态变「在线」即接通。
 
-AI 服务：新增 AI 服务填 `https://api.deepseek.com/v1` + 密钥 + `deepseek-chat`；
+AI 服务：新增 AI 服务填 `https://api.deepseek.com/v1` + 密钥 + `deepseek-flash`；
 地址留空则走内置模拟回复，可先验证链路。
 
 ## 五、修改端口与令牌

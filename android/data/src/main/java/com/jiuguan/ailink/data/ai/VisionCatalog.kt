@@ -5,9 +5,11 @@ import com.jiuguan.ailink.model.VisionSupport
 /**
  * 模型名的静态快判表。
  *
- * 目的只是**省掉一次探测请求**：命中「确定多模态」或「确定纯文本」时直接给结论，
- * 其余一律返回 null 交给 [VisionProbe] 实测。因此这里只收高置信度的条目，
- * 宁可漏判（多探一次），也不要误判（把能识图的模型锁成纯文本）。
+ * 只做一件事：认出**确定支持**多模态的模型，省掉一次探测请求。
+ * 故意不再维护「确定是纯文本」的名单——厂商会把同名别名升级成多模态
+ * （DeepSeek 的 deepseek-chat/deepseek-flash 就属于这种演进），
+ * 一旦写死就会把能识图的服务误判为不支持，而误判的代价远大于多一次 8 token 的探测。
+ * 因此：名单没命中 → 一律交给 [VisionProbe] 实测。
  */
 internal object VisionCatalog {
 
@@ -33,6 +35,8 @@ internal object VisionCatalog {
         "glm-4.5v",
         "glm-5v",
         "deepseek-vl",
+        "deepseek-flash",
+        "deepseek-v4-flash",
         "kimi-vl",
         "moonshot-v1-vision",
         "llava",
@@ -43,17 +47,6 @@ internal object VisionCatalog {
         "vision"
     )
 
-    /** 确定只接受文本输入的常用模型，避免对它们发出注定失败的探测请求。 */
-    private val TEXT_ONLY_PATTERNS = listOf(
-        "deepseek-chat",
-        "deepseek-reasoner",
-        "moonshot-v1-8k",
-        "moonshot-v1-32k",
-        "moonshot-v1-128k",
-        "hunyuan-lite",
-        "ernie-3.5"
-    )
-
     /** o 系列的推理模型从 o3 起原生多模态，用前缀匹配避免误伤其它含 "o3" 的名字。 */
     private val VISION_PREFIXES = listOf("o3", "o4")
 
@@ -61,7 +54,6 @@ internal object VisionCatalog {
     fun quickJudge(model: String): VisionSupport? {
         val id = model.trim().lowercase()
         if (id.isBlank()) return null
-        if (TEXT_ONLY_PATTERNS.any { id.contains(it) }) return VisionSupport.UNSUPPORTED
         if (VISION_PREFIXES.any { id.startsWith(it) }) return VisionSupport.SUPPORTED
         if (VISION_PATTERNS.any { id.contains(it) }) return VisionSupport.SUPPORTED
         return null

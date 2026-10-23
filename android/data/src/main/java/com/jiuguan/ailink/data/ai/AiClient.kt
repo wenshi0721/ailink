@@ -115,7 +115,9 @@ class AiClient {
         if (profile.baseUrl.isBlank()) return@withContext VisionSupport.UNKNOWN
         val payload = buildJsonObject {
             put("model", profile.model.ifBlank { "gpt-3.5-turbo" })
-            put("max_tokens", 8)
+            // 给足额度：V4.1 Flash 这类默认开思考模式的模型，8 个 token 会被思考过程吃光，
+            // 返回空内容会让探测误判。探测只看 HTTP 状态，不看内容长度。
+            put("max_tokens", 64)
             put("stream", false)
             put("messages", buildJsonArray {
                 add(buildJsonObject {
@@ -150,8 +152,9 @@ class AiClient {
             probeClient.newCall(request).execute().use { response ->
                 val body = response.body?.string().orEmpty()
                 when {
-                    response.isSuccessful ->
-                        if (parseContent(body).isNotBlank()) VisionSupport.SUPPORTED else VisionSupport.UNKNOWN
+                    // 2xx 已经说明接口接受了图片内容块。不再要求回复非空：
+                    // 思考型模型可能把额度花在 reasoning 上，内容为空却不代表不支持识图。
+                    response.isSuccessful -> VisionSupport.SUPPORTED
 
                     response.code in VISION_REJECT_CODES && looksLikeImageRejection(body) ->
                         VisionSupport.UNSUPPORTED

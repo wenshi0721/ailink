@@ -30,14 +30,28 @@ class VisionCatalogTest {
     }
 
     @Test
-    fun `纯文本模型直接判定不支持`() {
+    fun `不维护纯文本黑名单，未知模型一律交给探测`() {
+        // 厂商会把同名别名升级成多模态（deepseek-chat → V4.1 Flash），
+        // 因此这里不允许再出现「名单直接判不支持」的行为。
         listOf(
             "deepseek-chat",
             "deepseek-reasoner",
+            "deepseek-v4-pro",
             "moonshot-v1-8k",
             "hunyuan-lite"
         ).forEach { model ->
-            assertEquals(model, VisionSupport.UNSUPPORTED, VisionCatalog.quickJudge(model))
+            assertNull(model, VisionCatalog.quickJudge(model))
+        }
+    }
+
+    @Test
+    fun `DeepSeek V4_1 Flash 及其旧名判定支持`() {
+        listOf(
+            "deepseek-flash",
+            "deepseek-v4-flash",
+            "deepseek-v4-flash-vision-exp"
+        ).forEach { model ->
+            assertEquals(model, VisionSupport.SUPPORTED, VisionCatalog.quickJudge(model))
         }
     }
 
@@ -59,9 +73,9 @@ class VisionCatalogTest {
 
     @Test
     fun `同一厂商的纯文本与多模态模型互不干扰`() {
-        assertEquals(VisionSupport.UNSUPPORTED, VisionCatalog.quickJudge("deepseek-chat"))
+        assertNull(VisionCatalog.quickJudge("deepseek-chat"))
         assertEquals(VisionSupport.SUPPORTED, VisionCatalog.quickJudge("deepseek-vl2"))
-        assertEquals(VisionSupport.UNSUPPORTED, VisionCatalog.quickJudge("moonshot-v1-32k"))
+        assertNull(VisionCatalog.quickJudge("moonshot-v1-32k"))
         assertEquals(VisionSupport.SUPPORTED, VisionCatalog.quickJudge("moonshot-v1-vision-preview"))
     }
 }

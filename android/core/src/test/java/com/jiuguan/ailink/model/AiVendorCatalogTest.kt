@@ -80,7 +80,7 @@ class AiVendorCatalogTest {
     @Test
     fun `默认模型取列表首项`() {
         val deepseek = AiVendorCatalog.byId("deepseek")
-        assertEquals("deepseek-chat", deepseek?.defaultModelId)
+        assertEquals("deepseek-flash", deepseek?.defaultModelId)
         val ark = AiVendorCatalog.byId("ark")
         assertEquals("", ark?.defaultModelId)
     }

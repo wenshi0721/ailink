@@ -46,8 +46,9 @@ object AiVendorCatalog {
             baseUrl = "https://api.deepseek.com/v1",
             aliases = listOf("https://api.deepseek.com"),
             models = listOf(
-                AiModelOption("deepseek-chat", "deepseek-chat 通用"),
-                AiModelOption("deepseek-reasoner", "deepseek-reasoner 推理")
+                AiModelOption("deepseek-flash", "deepseek-flash V4.1 识图"),
+                AiModelOption("deepseek-v4-flash", "deepseek-v4-flash 旧名"),
+                AiModelOption("deepseek-v4-pro", "deepseek-v4-pro 推理")
             ),
             keyHint = "platform.deepseek.com → API keys，密钥以 sk- 开头"
         ),

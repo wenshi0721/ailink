@@ -7,6 +7,19 @@
 
 ## [未发布]
 
+## [1.1.3] - 2026-10-23
+
+### 变更
+
+- DeepSeek 厂商模板默认模型更新为 `deepseek-flash`（V4.1 Flash，原生多模态），并补充 `deepseek-v4-flash` / `deepseek-v4-pro` 选项
+
+### 修复
+
+- 识图能力被误判为「不支持」：厂商会把同名别名升级为多模态（如 DeepSeek 的 `deepseek-chat` 已由 V4.1 Flash 提供服务），原静态黑名单命中即判死；现只快判「确定支持」的模型，其余一律实测
+- 「测试调用」此前仍会先走静态名单，导致用户无法纠正误判；现在强制重探
+- 探测判定改为以 HTTP 2xx 为准，避免思考型模型把 token 花在推理上、返回空内容时被判成未知
+- 旧版检测缓存自动失效（缓存加入版本号），升级后不会继续显示过期结论
+
 ## [1.1.2] - 2026-10-23
 
 ### 新增
@@ -59,7 +72,8 @@
 - 内置 QQ 运行时首次登录需第二块屏幕扫码（平台安全策略）
 - NapCat 组件禁止商用，含该组件的 APK 不可商业分发（详见 THIRD-PARTY-NOTICES.md）
 
-[未发布]: https://github.com/wenshi0721/ailink/compare/1.1.2...HEAD
+[未发布]: https://github.com/wenshi0721/ailink/compare/1.1.3...HEAD
+[1.1.3]: https://github.com/wenshi0721/ailink/releases/tag/1.1.3
 [1.1.2]: https://github.com/wenshi0721/ailink/releases/tag/1.1.2
 [1.1.1]: https://github.com/wenshi0721/ailink/releases/tag/1.1.1
 [1.1.0]: https://github.com/wenshi0721/ailink/releases/tag/1.1.0

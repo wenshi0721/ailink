@@ -32,29 +32,30 @@ class VisionProbe(
             ?: VisionSupport.UNKNOWN
     }
 
-    /** 返回 null 表示没有可用的缓存（没探过，或配置已改导致指纹不匹配）。 */
+    /** 返回 null 表示没有可用的缓存（没探过，或配置已改，或缓存来自旧版判定逻辑）。 */
     private fun readCache(profile: AiProfileEntity): VisionSupport? {
         val raw = prefs.visionCache(profile.id)
         if (raw.isBlank()) return null
-        val parts = raw.split('|', limit = 3)
-        if (parts.size != 3) return null
-        val status = runCatching { VisionSupport.valueOf(parts[0]) }.getOrNull() ?: return null
-        if ("${parts[1]}|${parts[2]}" != fingerprintOf(profile)) return null
+        val parts = raw.split('|', limit = 4)
+        // 版本号对不上说明是旧判定逻辑写的缓存，直接作废，避免升级后仍显示过期结论
+        if (parts.size != 4 || parts[0] != CACHE_VERSION) return null
+        val status = runCatching { VisionSupport.valueOf(parts[1]) }.getOrNull() ?: return null
+        if ("${parts[2]}|${parts[3]}" != fingerprintOf(profile)) return null
         return status
     }
 
     /**
      * 给出结论，必要时发一次探测请求。
      *
-     * @param force true 表示忽略缓存（配置页「测试调用」用），仍遵守模型名快判
+     * @param force true 表示连模型名快判与缓存都不信，直接实测（配置页「测试调用」用）。
+     *              这是用户纠正误判的唯一手段，必须真的发请求。
      */
     suspend fun detect(profile: AiProfileEntity, force: Boolean = false): VisionSupport {
         if (!profile.visionEnabled) return VisionSupport.UNSUPPORTED
         if (profile.isLocalOnly || profile.baseUrl.isBlank()) return VisionSupport.UNSUPPORTED
 
-        VisionCatalog.quickJudge(profile.model)?.let { return it }
-
         if (!force) {
+            VisionCatalog.quickJudge(profile.model)?.let { return it }
             readCache(profile)?.let { return it }
         }
 
@@ -75,7 +76,7 @@ class VisionProbe(
     }
 
     private fun encode(profile: AiProfileEntity, status: VisionSupport): String =
-        "${status.name}|${profile.baseUrl.trim()}|${profile.model.trim()}"
+        "$CACHE_VERSION|${status.name}|${profile.baseUrl.trim()}|${profile.model.trim()}"
 
     private fun fingerprintOf(profile: AiProfileEntity): String =
         "${profile.baseUrl.trim()}|${profile.model.trim()}"
@@ -84,5 +85,10 @@ class VisionProbe(
         VisionSupport.SUPPORTED -> "支持图片输入"
         VisionSupport.UNSUPPORTED -> "不支持图片输入，按纯文本处理"
         VisionSupport.UNKNOWN -> "无法判定（鉴权/额度/网络问题），先按纯文本处理"
+    }
+
+    private companion object {
+        /** 判定逻辑变更时递增，让旧结论自动失效。 */
+        const val CACHE_VERSION = "2"
     }
 }
