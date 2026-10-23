@@ -98,6 +98,7 @@ class QqBridgeService : Service() {
             _qrUpdatedAt.value = 0L
             _decodeUrl.value = null
             _loggedIn.value = false
+            _offline.value = false
             _quickLoginFailed.value = false
             _loginExpired.value = false
         }
@@ -109,6 +110,9 @@ class QqBridgeService : Service() {
     private var process: Process? = null
     private var relaunchCount = 0
     private var lastRelaunchAt = 0L
+    /** NapCat 已声明自己在重启 worker（`账号已离线，正在重启 Worker`）。 */
+    @Volatile
+    private var napcatSelfHealing = false
     private var logJob: Job? = null
     private var qrJob: Job? = null
 
@@ -173,8 +177,11 @@ class QqBridgeService : Service() {
             runtime.runtimeDir,
             "rootfs/opt/QQ/resources/app/app_launcher/napcat/cache/qrcode.png"
         )
-        var lastStamp = -1L
-        var lastSize = -1L
+        // 首轮只登记基线，不推送：qrcode.png 可能是上一轮 QQ 留下的过期图。
+        // 实测日志里 AiLink 在 11:52:22 就推了「第 1 次」二维码，而本次 QQ 直到
+        // 11:53:37 才第一次出图——用户扫到的那张必然已失效。
+        var lastStamp = if (file.exists()) file.lastModified() else -1L
+        var lastSize = if (file.exists()) file.length() else -1L
         while (scope.isActive) {
             delay(2000)
             if (!file.exists()) continue
@@ -196,7 +203,11 @@ class QqBridgeService : Service() {
 
     /**
      * 掉线自愈：息屏休眠常导致 QQ 与服务器的连接断开且不会自己重连。
-     * 连续离线超过 60 秒就重启容器里的 QQ；每小时最多 3 次，避免无限循环。
+     * 连续离线超过阈值就重启容器里的 QQ；每小时最多 3 次，避免无限循环。
+     *
+     * 阈值不能低于 NapCat 自己的自愈窗口：NapCat 收到 SelfOffline 后先等
+     * selfOfflineDelayMs = 60000 毫秒，期间若自己恢复则静默回到 ready，
+     * 否则才重启 worker。若我们在同一时刻销毁进程树，等于把它唯一的自愈机会抹掉。
      */
     private suspend fun watchOffline() {
         var offlineSince = 0L
@@ -211,7 +222,9 @@ class QqBridgeService : Service() {
                 offlineSince = now
                 continue
             }
-            if (now - offlineSince < 60_000) continue
+            // NapCat 已经在重启 worker 时，把容器重启顺延到它后面
+            val window = if (napcatSelfHealing) 180_000L else 90_000L
+            if (now - offlineSince < window) continue
 
             if (now - lastRelaunchAt < 3_600_000 && relaunchCount >= 3) {
                 appendLog("[app] 已连续重启 3 次，暂缓自动恢复，请手动点「启动 QQ」")
@@ -223,7 +236,7 @@ class QqBridgeService : Service() {
             relaunchCount += 1
             lastRelaunchAt = now
             offlineSince = now
-            appendLog("[app] 离线超过 60 秒，第 $relaunchCount 次重启 QQ 容器")
+            appendLog("[app] 离线超过 ${window / 1000} 秒，第 $relaunchCount 次重启 QQ 容器")
             updateNotification("正在重启 QQ…")
             relaunch()
         }
@@ -240,6 +253,10 @@ class QqBridgeService : Service() {
 
         val runtime = LocalRuntime(applicationContext)
         runtime.resetLaunchLog()
+        // 新进程等于重新登录：不清掉 _loggedIn，watchQrCode 会因为「已登录」而
+        // 拒绝推送新二维码，用户就再也扫不到码了
+        _loggedIn.value = false
+        napcatSelfHealing = false
         val uin = AppPrefs(applicationContext).qqUin.value
         runCatching { runtime.launchQq(uin) }
             .onSuccess { started ->
@@ -261,20 +278,44 @@ class QqBridgeService : Service() {
             .onFailure { appendLog("[app] 重启失败：${it.message}") }
     }
 
+    /**
+     * 解析 QQ/NapCat 的 stdout。
+     *
+     * 判据必须与本机 NapCat 4.18.38（assets/runtime/NapCat.Shell.zip 内 napcat.mjs）的
+     * 实际输出对齐：
+     *  - `onSelfStatusChanged` 只在 status === 20 时打印「账号状态变更为离线」；
+     *    status 非 20 时仅把 selfInfo.online 置 true，**不打印任何日志**。
+     *  - 被服务端踢下线走 `onKickedOffLine`，打印 `[KickedOffLine] [标题] 描述`。
+     *  - 登录成功的可观测副作用是「本账号数据/缓存目录：」与「协议适配器初始化完成」。
+     *
+     * 因此「恢复在线」在日志文本层根本读不到，只能拿上面两条里的后一条当复位点。
+     */
     private fun parseLine(line: String) {
         if (line.contains("二维码解码URL")) {
             val url = line.substringAfter("二维码解码URL:").trim()
             if (url.startsWith("http")) _decodeUrl.value = url
         }
-        if (line.contains("账号状态变更为离线") || line.contains("账号状态变更为离开")) {
+        // 登录完成 / worker 重建完成：都会重新走一遍 InitNapCat → initAdapters
+        if (line.contains("协议适配器初始化完成") || line.contains("本账号数据/缓存目录")) {
+            _loggedIn.value = true
+            napcatSelfHealing = false
+            if (_offline.value) {
+                _offline.value = false
+                appendLog("[app] QQ 已恢复在线")
+                updateNotification("QQ 已登录")
+            }
+        }
+        // 未登录阶段的 status=20 推送不代表"掉线"——此时没有会话可掉，
+        // 重启容器只会让用户刚扫的二维码作废。
+        if (line.contains("账号状态变更为离线") && _loggedIn.value) {
             _offline.value = true
-            appendLog("[app] 检测到 QQ 掉线，60 秒内未恢复将自动重启容器")
+            appendLog("[app] 检测到 QQ 掉线，90 秒内未恢复将自动重启容器")
             updateNotification("QQ 掉线，正在等待恢复")
         }
-        if (line.contains("账号状态变更为在线") || line.contains("账号状态变更为手机在线")) {
-            if (_offline.value) appendLog("[app] QQ 已恢复在线")
-            _offline.value = false
-            updateNotification("QQ 已登录")
+        // NapCat 自己已经在处置，别在同一时刻杀进程
+        if (line.contains("账号已离线，正在重启 Worker")) {
+            napcatSelfHealing = true
+            appendLog("[app] NapCat 正在自行重启 Worker，容器重启顺延")
         }
         if (line.contains("登录态已失效")) {
             _quickLoginFailed.value = true

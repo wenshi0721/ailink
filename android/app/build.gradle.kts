@@ -54,8 +54,8 @@ android {
         applicationId = "com.jiuguan.ailink"
         minSdk = 24
         targetSdk = 34
-        versionCode = 20
-        versionName = "1.1.0"
+        versionCode = 21
+        versionName = "1.1.1"
     }
 
     // 正式签名：见文件顶部 signingProps 的说明

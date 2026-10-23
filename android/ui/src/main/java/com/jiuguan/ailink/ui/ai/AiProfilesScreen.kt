@@ -75,8 +75,8 @@ fun AiProfilesScreen(
                 .padding(horizontal = 20.dp)
         ) {
             InfoBanner(
-                title = "兼容 OpenAI 协议",
-                message = "支持 OpenAI、DeepSeek、通义千问、Moonshot、Ollama、LM Studio、One-API 等服务，填写接口地址与模型名即可。",
+                title = "一键套用主流厂商模板",
+                message = "新增时点选 DeepSeek、通义千问、Kimi、智谱、豆包等厂商，接口地址与模型会自动填好，只需粘贴 API Key；也支持手动填写任意 OpenAI 兼容服务。",
                 tone = com.jiuguan.ailink.ui.common.BannerTone.INFO
             )
 

@@ -7,6 +7,8 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.jiuguan.ailink.assembly.AppContainer
 import com.jiuguan.ailink.data.local.AiProfileEntity
+import com.jiuguan.ailink.model.AiVendor
+import com.jiuguan.ailink.model.AiVendorCatalog
 import com.jiuguan.ailink.util.Ids
 import kotlinx.coroutines.launch
 
@@ -32,12 +34,17 @@ data class AiForm(
             systemPrompt = entity.systemPrompt
         )
 
-        fun preset() = AiForm(
-            name = "DeepSeek",
-            baseUrl = "https://api.deepseek.com/v1",
-            model = "deepseek-chat",
-            systemPrompt = "你是一个礼貌、自然的聊天伙伴，回复简短口语化。"
-        )
+        fun preset() = AiVendorCatalog.byId(DEFAULT_VENDOR_ID)?.let { vendor ->
+            AiForm(
+                name = vendor.name,
+                baseUrl = vendor.baseUrl,
+                model = vendor.defaultModelId,
+                systemPrompt = "你是一个礼貌、自然的聊天伙伴，回复简短口语化。"
+            )
+        } ?: AiForm(systemPrompt = "你是一个礼貌、自然的聊天伙伴，回复简短口语化。")
+
+        /** 新增配置时默认套用的厂商模板。 */
+        private const val DEFAULT_VENDOR_ID = "deepseek"
     }
 }
 
@@ -65,6 +72,10 @@ class AiProfileEditViewModel(
 
     val isNew: Boolean get() = profileId.isBlank()
 
+    /** 当前地址命中的厂商模板；手动改成自定义地址后为 null。 */
+    val selectedVendor: AiVendor?
+        get() = AiVendorCatalog.matchByBaseUrl(form.baseUrl)
+
     init {
         viewModelScope.launch {
             if (profileId.isNotBlank()) {
@@ -80,6 +91,27 @@ class AiProfileEditViewModel(
     fun update(transform: (AiForm) -> AiForm) {
         form = transform(form)
         if (error.isNotBlank()) error = ""
+    }
+
+    /**
+     * 套用厂商模板：只覆盖地址与模型，并按需替换配置名称。
+     * 用户自定义的名称（与上一个模板名不同的）不会被覆盖，避免反复切换厂商冲掉自己的命名。
+     */
+    fun applyVendor(vendor: AiVendor) {
+        val previous = selectedVendor
+        val keepName = form.name.isNotBlank() && form.name != previous?.name
+        update {
+            it.copy(
+                name = if (keepName) it.name else vendor.name,
+                baseUrl = vendor.baseUrl,
+                model = vendor.defaultModelId
+            )
+        }
+        testMessage = ""
+    }
+
+    fun applyModel(modelId: String) {
+        update { it.copy(model = modelId) }
     }
 
     private fun toEntity(current: AiForm): AiProfileEntity = AiProfileEntity(

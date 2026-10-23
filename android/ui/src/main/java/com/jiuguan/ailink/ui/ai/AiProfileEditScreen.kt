@@ -88,6 +88,15 @@ fun AiProfileEditScreen(
                 Spacer(Modifier.height(12.dp))
             }
 
+            AiVendorQuickConfig(
+                selected = vm.selectedVendor,
+                currentModel = form.model,
+                onSelectVendor = vm::applyVendor,
+                onSelectModel = vm::applyModel
+            )
+
+            Spacer(Modifier.height(16.dp))
+
             AppCard {
                 LabeledField(
                     label = "配置名称",
