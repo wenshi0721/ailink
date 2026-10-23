@@ -25,12 +25,14 @@ internal fun JsonObject.jLong(key: String): Long =
 
 private val CQ_CODE = Regex("\\[CQ:[^]]*]")
 private val CQ_IMAGE = Regex("\\[CQ:image,([^\\]]*)]")
+private val CQ_REPLY = Regex("\\[CQ:reply,([^\\]]*)]")
 
-/** 一条入站消息的解析结果：文本、是否 @ 自己、附带的图片。 */
+/** 一条入站消息的解析结果：文本、是否 @ 自己、附带的图片、被引用的消息 id。 */
 internal data class ParsedMessage(
     val text: String,
     val atMe: Boolean,
-    val images: List<IncomingImage> = emptyList()
+    val images: List<IncomingImage> = emptyList(),
+    val replyToId: String = ""
 )
 
 /**
@@ -42,6 +44,7 @@ internal data class ParsedMessage(
  */
 internal fun parseMessage(message: JsonElement?, sid: Long, raw: String): ParsedMessage {
     var atMe = false
+    var replyToId = ""
     val builder = StringBuilder()
     val images = mutableListOf<IncomingImage>()
 
@@ -56,6 +59,10 @@ internal fun parseMessage(message: JsonElement?, sid: Long, raw: String): Parsed
                         val qq = data?.jStr("qq").orEmpty()
                         if (qq.isNotBlank() && qq == sid.toString()) atMe = true
                         builder.append(' ')
+                    }
+                    // 引用/回复段：只取被引用消息的 id，正文与图片由上层按 id 回查
+                    "reply" -> {
+                        replyToId = data?.jStr("id").orEmpty()
                     }
                     "face" -> builder.append("[表情]")
                     "image" -> {
@@ -82,6 +89,7 @@ internal fun parseMessage(message: JsonElement?, sid: Long, raw: String): Parsed
             val cq = runCatching { message.content }.getOrDefault("")
             atMe = cq.contains("[CQ:at,qq=$sid]")
             images += parseCqImages(cq)
+            replyToId = parseCqReplyId(cq)
             builder.append(cq.replace(CQ_CODE, " "))
         }
 
@@ -91,6 +99,7 @@ internal fun parseMessage(message: JsonElement?, sid: Long, raw: String): Parsed
     if (builder.isBlank() && raw.isNotBlank()) {
         atMe = atMe || raw.contains("[CQ:at,qq=$sid]")
         if (images.isEmpty()) images += parseCqImages(raw)
+        if (replyToId.isBlank()) replyToId = parseCqReplyId(raw)
         builder.append(raw.replace(CQ_CODE, " "))
     }
 
@@ -98,7 +107,7 @@ internal fun parseMessage(message: JsonElement?, sid: Long, raw: String): Parsed
         // 纯图片消息原本会被上层当成空文本丢弃，这里补一个占位符，让识图链路有机会接管。
         if (images.isNotEmpty()) "[图片]" else ""
     }
-    return ParsedMessage(text = text, atMe = atMe, images = images)
+    return ParsedMessage(text = text, atMe = atMe, images = images, replyToId = replyToId)
 }
 
 /**
@@ -126,3 +135,14 @@ private fun parseCqImages(cq: String): List<IncomingImage> =
         )
         if (image.url.isBlank() && image.file.isBlank()) null else image
     }.toList()
+
+/** 从 CQ 码里提取被引用消息 id，形如 `[CQ:reply,id=-1234567890]`。 */
+private fun parseCqReplyId(cq: String): String {
+    val match = CQ_REPLY.find(cq) ?: return ""
+    return match.groupValues[1]
+        .split(',')
+        .firstOrNull { it.startsWith("id=") }
+        ?.substringAfter('=')
+        ?.trim()
+        .orEmpty()
+}

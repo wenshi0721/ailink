@@ -14,7 +14,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         ConversationEntity::class,
         MessageEntity::class
     ],
-    version = 3,
+    version = 4,
     exportSchema = false
 )
 abstract class AiLinkDatabase : RoomDatabase() {
@@ -51,6 +51,18 @@ abstract class AiLinkDatabase : RoomDatabase() {
             }
         }
 
+        /**
+         * v3 → v4：新增 messages.imagesJson，把消息附带的图片引用持久化。
+         * 默认空串表示"无图"，与升级前行为一致；历史消息不回填（当时也没存）。
+         */
+        private val MIGRATION_3_4 = object : Migration(3, 4) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "ALTER TABLE messages ADD COLUMN imagesJson TEXT NOT NULL DEFAULT ''"
+                )
+            }
+        }
+
         @Volatile
         private var instance: AiLinkDatabase? = null
 
@@ -61,7 +73,7 @@ abstract class AiLinkDatabase : RoomDatabase() {
                     AiLinkDatabase::class.java,
                     DB_NAME
                 )
-                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
+                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
                     .fallbackToDestructiveMigration()
                     .build()
                     .also { instance = it }

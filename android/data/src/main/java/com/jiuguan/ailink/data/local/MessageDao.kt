@@ -18,6 +18,17 @@ interface MessageDao {
     @Query("SELECT COUNT(*) FROM messages WHERE convId = :convId AND platformMsgId = :platformMsgId")
     suspend fun countByPlatformId(convId: String, platformMsgId: String): Int
 
+    /** 按平台消息 id 取整条：引用回复（reply 段）要靠它还原被引用的图片与文本。 */
+    @Query(
+        "SELECT * FROM messages WHERE convId = :convId AND platformMsgId = :platformMsgId " +
+            "ORDER BY id DESC LIMIT 1"
+    )
+    suspend fun findByPlatformId(convId: String, platformMsgId: String): MessageEntity?
+
+    /** 图片下载缓存后回填 cache 文件名，供后续轮次直接读本地文件。 */
+    @Query("UPDATE messages SET imagesJson = :imagesJson WHERE convId = :convId AND platformMsgId = :platformMsgId")
+    suspend fun updateImagesJson(convId: String, platformMsgId: String, imagesJson: String)
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insert(message: MessageEntity): Long
 

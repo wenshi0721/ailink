@@ -28,6 +28,9 @@ class LocalRuntime(private val context: Context) {
         const val LOCAL_WS_HOST = "127.0.0.1"
         const val LOCAL_WS_PORT = 3001
         const val LOCAL_WS_TOKEN = "ailink-local"
+
+        /** QQ stdout 日志的体积上限：超过后整轮丢弃，避免无限增长。 */
+        private const val MAX_LAUNCH_LOG_BYTES = 2L * 1024L * 1024L
     }
 
     data class CheckItem(
@@ -449,7 +452,15 @@ class LocalRuntime(private val context: Context) {
         File(runtimeDir, "rootfs/opt/ailink/qq-launch.log")
 
     fun resetLaunchLog() {
-        runCatching { launchLogFile().writeText("") }
+        // 不清空，只做体积上限 + 分隔：之前每次启动 QQ 都覆盖，"复现完再导出"时
+        // 上一轮的 stdout 已经没了，而图片/掉线这类问题恰恰要靠它定位。
+        runCatching {
+            val file = launchLogFile()
+            if (file.exists() && file.length() > MAX_LAUNCH_LOG_BYTES) file.writeText("")
+            val stamp = java.text.SimpleDateFormat("MM-dd HH:mm:ss", java.util.Locale.US)
+                .format(java.util.Date())
+            file.appendText("\n===== 新一轮启动 $stamp =====\n")
+        }
     }
 
     fun appendLaunchLog(line: String) {

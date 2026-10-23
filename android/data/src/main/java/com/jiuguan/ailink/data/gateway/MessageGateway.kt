@@ -14,7 +14,12 @@ data class IncomingMessage(
     val platformMsgId: String,
     val timestamp: Long,
     /** 本条消息附带的图片（顺序与消息段一致）；是否真的送进模型由识图能力决定。 */
-    val images: List<IncomingImage> = emptyList()
+    val images: List<IncomingImage> = emptyList(),
+    /**
+     * 被引用消息的平台消息 id（OneBot `reply` 段的 `id`）。
+     * 非空表示这条消息是"引用/回复"别人某条消息，用来还原被引用的文本与图片。
+     */
+    val replyToId: String = ""
 )
 
 /**
@@ -60,4 +65,12 @@ interface MessageGateway {
 
     /** 发送文本消息，返回是否成功提交到接入端。 */
     suspend fun sendText(peerKey: String, isGroup: Boolean, text: String): Boolean
+
+    /**
+     * 图片地址过期后，用桥接端的内部文件名换取一个新的可下载地址。
+     *
+     * QQ 图床链接带 rkey 鉴权会失效，引用回复或回看旧图时需要重新换一次。
+     * 返回 null 表示该桥接端不支持（调用方降级为纯文本）。
+     */
+    suspend fun refreshImageUrl(file: String, url: String): String? = null
 }

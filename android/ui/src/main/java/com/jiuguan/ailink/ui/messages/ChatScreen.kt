@@ -1,5 +1,6 @@
 package com.jiuguan.ailink.ui.messages
 
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
@@ -44,6 +45,10 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -180,6 +185,7 @@ fun ChatScreen(
                             platform = platform,
                             isGroup = isGroup,
                             showTime = showTime,
+                            resolveImage = { cache -> vm.imageFile(cache) },
                             onRetry = { vm.retry(message) }
                         )
                     }
@@ -243,12 +249,57 @@ fun ChatScreen(
     }
 }
 
+/**
+ * 历史图片缩略图。
+ *
+ * 只读 `filesDir/imgcache` 里的本地副本——QQ 图床 URL 带 rkey 会过期，
+ * 界面上再去拉网络图只会得到 403，反而比不显示更糟。
+ */
+@Composable
+private fun MessageThumb(file: java.io.File) {
+    var bitmap by remember(file) { mutableStateOf<ImageBitmap?>(null) }
+
+    LaunchedEffect(file) {
+        bitmap = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            runCatching {
+                val decoded = android.graphics.BitmapFactory.decodeFile(file.absolutePath)
+                    ?: return@runCatching null
+                val maxSide = maxOf(decoded.width, decoded.height).coerceAtLeast(1)
+                val scale = 220f / maxSide
+                val scaled = if (scale < 1f) {
+                    android.graphics.Bitmap.createScaledBitmap(
+                        decoded,
+                        (decoded.width * scale).toInt().coerceAtLeast(1),
+                        (decoded.height * scale).toInt().coerceAtLeast(1),
+                        true
+                    )
+                } else {
+                    decoded
+                }
+                scaled.asImageBitmap()
+            }.getOrNull()
+        }
+    }
+
+    bitmap?.let { image ->
+        Image(
+            bitmap = image,
+            contentDescription = "图片",
+            contentScale = ContentScale.Crop,
+            modifier = Modifier
+                .size(110.dp)
+                .clip(RoundedCornerShape(8.dp))
+        )
+    }
+}
+
 @Composable
 private fun MessageBubble(
     message: MessageEntity,
     platform: Platform,
     isGroup: Boolean,
     showTime: Boolean,
+    resolveImage: (String) -> java.io.File?,
     onRetry: () -> Unit
 ) {
     if (message.isSystem) {
@@ -348,6 +399,16 @@ private fun MessageBubble(
                             color = if (message.isOutgoing) MaterialTheme.colorScheme.onPrimary
                             else MaterialTheme.colorScheme.onSurface
                         )
+                        // 历史图片缩略图：只读本地缓存，不触发网络（缓存缺失就不显示）
+                        val thumbs = remember(message.imagesJson) {
+                            message.images.mapNotNull { image -> resolveImage(image.cache) }
+                        }
+                        if (thumbs.isNotEmpty()) {
+                            Spacer(Modifier.height(6.dp))
+                            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                thumbs.take(3).forEach { file -> MessageThumb(file) }
+                            }
+                        }
                     }
                 }
 

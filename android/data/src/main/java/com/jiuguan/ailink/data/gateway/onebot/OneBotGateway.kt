@@ -72,6 +72,10 @@ class OneBotGateway(
     @Volatile
     private var selfId: Long = 0L
 
+    /** 上次补拉时间：WebSocket 抖动频繁触发 onOpen 时，避免反复拉同一批历史。 */
+    @Volatile
+    private var lastCatchUpAt = 0L
+
     override fun start() {
         if (running) return
         running = true
@@ -115,6 +119,10 @@ class OneBotGateway(
                         GatewayEvent.Status(online = true, selfId = selfId, latencyMs = 0L)
                     )
                     startHeartbeat()
+                    // 连上就补拉：NapCat 不重放断线期间的事件（实测），
+                    // 断线/重启窗口里到达的消息只能靠历史接口找回来。
+                    // 传 webSocket 而不是读 socket 字段：onOpen 可能早于 `socket = ws` 赋值。
+                    scope.launch { catchUpMissed(webSocket) }
                 }
 
                 override fun onMessage(webSocket: WebSocket, text: String) {
@@ -257,10 +265,187 @@ class OneBotGateway(
                     atMe = parsed.atMe,
                     platformMsgId = root.jStr("message_id"),
                     timestamp = timestamp,
-                    images = parsed.images
+                    images = parsed.images,
+                    replyToId = parsed.replyToId
                 )
             )
         )
+    }
+
+    /**
+     * 断线补拉：把连接断开期间到达的消息从历史接口找回来。
+     *
+     * 为什么需要：NapCat 4.18.38 的正向 WS **不会**重放断线期间缓冲的事件
+     * （实测 20:50:20 到达的两条消息，20:50:40 重连后一条都没有补推），
+     * 所以只能在连上之后主动调用历史接口。
+     *
+     * 边界设计：
+     *  - 只在最近 [CATCH_UP_MAX_AGE_SEC] 秒内有动静的会话上补，最多 [CATCH_UP_SESSIONS] 个；
+     *  - 每个会话最多 [CATCH_UP_MESSAGES] 条，整体 25 秒预算，超时立即收手；
+     *  - 消息是否"值得回复"交给上层：`AccountRuntime.STALE_WINDOW_MS` 已实现
+     *    「超过 10 分钟只入库、不回复」，这里只负责把消息补齐并投递；
+     *  - 重复由 `MessageRepository.recordIncoming` 的 platformMsgId 查重挡掉。
+     */
+    private suspend fun catchUpMissed(ws: WebSocket) {
+        val now = System.currentTimeMillis()
+        if (now - lastCatchUpAt < CATCH_UP_THROTTLE_MS) return
+        lastCatchUpAt = now
+
+        val sessions = runCatching {
+            val reply = callAction(
+                ws,
+                "get_recent_contact",
+                buildJsonObject { put("count", CATCH_UP_SESSIONS) }
+            ) ?: return
+            (reply["data"] as? JsonArray)?.mapNotNull { it as? JsonObject }.orEmpty()
+        }.getOrElse {
+            log("补拉跳过：get_recent_contact 调用失败（${it.message ?: "未知错误"}）")
+            return
+        }
+        if (sessions.isEmpty()) return
+
+        val deadline = System.currentTimeMillis() + CATCH_UP_BUDGET_MS
+        var total = 0
+        for (session in sessions) {
+            if (System.currentTimeMillis() > deadline) {
+                log("补拉中断：超出 ${CATCH_UP_BUDGET_MS / 1000} 秒预算")
+                break
+            }
+            val peerUin = session.jStr("peerUin")
+            if (peerUin.isBlank()) continue
+            val msgTime = session.jStr("msgTime").toLongOrNull() ?: 0L
+            if (msgTime > 0 && now / 1000 - msgTime > CATCH_UP_MAX_AGE_SEC) continue
+
+            // chatType 2 = 群，其余按私聊处理；判定错了只会拉空、不会误发
+            val isGroup = session.jLong("chatType") == 2L
+            val action = if (isGroup) "get_group_msg_history" else "get_friend_msg_history"
+            val params = buildJsonObject {
+                if (isGroup) put("group_id", peerUin) else put("user_id", peerUin)
+                put("count", CATCH_UP_MESSAGES)
+                put("reverse_order", false)
+            }
+            val reply = runCatching { callAction(ws, action, params) }.getOrNull() ?: continue
+            val messages = runCatching {
+                reply["data"]?.jsonObject?.get("messages") as? JsonArray
+            }.getOrNull() ?: continue
+
+            var pushed = 0
+            for (element in messages) {
+                val raw = element as? JsonObject ?: continue
+                val incoming = toIncoming(raw, isGroup, peerUin) ?: continue
+                // 逐条也按时间窗过滤：一个会话里可能压着几十条旧消息，
+                // 全投进去只会把入库/幂等路径刷满，对补回断线窗口毫无帮助。
+                if (now - incoming.timestamp > CATCH_UP_MAX_AGE_SEC * 1000) continue
+                _events.tryEmit(GatewayEvent.Incoming(incoming))
+                pushed++
+            }
+            if (pushed > 0) {
+                total += pushed
+                log("补拉 ${if (isGroup) "群 $peerUin" else "私聊 $peerUin"}：$pushed 条")
+            }
+        }
+        if (total > 0) log("补拉完成：共 $total 条待入库")
+    }
+
+    /**
+     * 把历史消息对象转成 [IncomingMessage]。
+     *
+     * 与 [handleMessage] 的差别只在 peerKey 的来源：私聊历史里 `user_id` 是"发送者"，
+     * 机器人自己发的那条 user_id 就是自己，因此私聊的 peer 必须用请求参数（[peerUin]），
+     * 不能像实时推送那样从每条消息里推。
+     */
+    internal fun toIncoming(root: JsonObject, isGroup: Boolean, peerUin: String): IncomingMessage? {        val senderId = root.jLong("user_id")
+        val sid = root.jLong("self_id").takeIf { it > 0 } ?: selfId
+        if (senderId > 0 && senderId == sid) return null
+
+        val parsed = parseMessage(root["message"], sid, root.jStr("raw_message"))
+        if (parsed.text.isBlank()) return null
+
+        val sender = root["sender"] as? JsonObject
+        val senderName = sender
+            ?.let { s -> s.jStr("card").ifBlank { s.jStr("nickname") } }
+            .orEmpty()
+
+        val peerKey: String
+        val title: String
+        if (isGroup) {
+            val groupId = root.jLong("group_id").takeIf { it > 0 }
+                ?: peerUin.toLongOrNull()
+                ?: return null
+            peerKey = "g:$groupId"
+            title = if (senderName.isNotBlank()) "群聊 · $senderName" else "群聊 $groupId"
+        } else {
+            val userId = peerUin.toLongOrNull() ?: return null
+            peerKey = "p:$userId"
+            title = senderName.ifBlank { "QQ $userId" }
+        }
+
+        val timestamp = root.jLong("time").let { seconds ->
+            if (seconds > 1_000_000_000L) seconds * 1000L else System.currentTimeMillis()
+        }
+
+        return IncomingMessage(
+            peerKey = peerKey,
+            title = title,
+            isGroup = isGroup,
+            senderId = senderId,
+            senderName = senderName.ifBlank { "对方" },
+            text = parsed.text,
+            atMe = parsed.atMe,
+            platformMsgId = root.jStr("message_id"),
+            timestamp = timestamp,
+            images = parsed.images,
+            replyToId = parsed.replyToId
+        )
+    }
+
+    /**
+     * 发一个不带 echo 之外的语义的 action，返回响应根对象。
+     *
+     * 与 [sendText] 的 echo 逻辑刻意不复用：`sendText` 的失败文案被 HANDOVER 的
+     * 关键字表引用，动它有回归风险；这里只服务补拉，失败一律当成"该桥接端不支持"。
+     */
+    private suspend fun callAction(
+        ws: WebSocket,
+        action: String,
+        params: JsonObject,
+        timeoutMs: Long = 8_000L
+    ): JsonObject? {
+        val echo = "act-${System.nanoTime()}"
+        val frame = buildJsonObject {
+            put("action", action)
+            put("params", params)
+            put("echo", echo)
+        }
+        val deferred = CompletableDeferred<String>()
+        pending[echo] = deferred
+        if (!ws.send(frame.toString())) {
+            pending.remove(echo)
+            return null
+        }
+        val reply = withTimeoutOrNull(timeoutMs) { deferred.await() }
+        pending.remove(echo)
+        val text = reply ?: return null
+        return runCatching { json.parseToJsonElement(text).jsonObject }.getOrNull()
+    }
+
+    private fun log(message: String) =
+        com.jiuguan.ailink.core.SessionLog.add("onebot", message)
+
+    /**
+     * 用桥接端的内部文件名换一个新鲜的图片地址。
+     *
+     * QQ 图床链接带 `rkey`，过期后原 URL 会 403/410；`get_image` 能按 file 重新签发一个。
+     * 只接受 http(s) 结果——返回的 `file` 是容器内路径，App 读不到。
+     */
+    override suspend fun refreshImageUrl(file: String, url: String): String? {
+        if (file.isBlank()) return null
+        val ws = socket ?: return null
+        val reply = runCatching {
+            callAction(ws, "get_image", buildJsonObject { put("file", file) })
+        }.getOrNull() ?: return null
+        val data = reply["data"]?.jsonObject ?: return null
+        return data.jStr("url").takeIf { it.startsWith("http") }
     }
 
     override suspend fun sendText(peerKey: String, isGroup: Boolean, text: String): Boolean {
@@ -329,5 +514,22 @@ class OneBotGateway(
             )
         }
         return ok
+    }
+
+    private companion object {
+        /** 补拉节流：5 分钟内只补一次，防止 WS 抖动把同一批历史反复投递。 */
+        const val CATCH_UP_THROTTLE_MS = 5 * 60_000L
+
+        /** 最近会话里只看这些个，够覆盖断线窗口，又不至于把整本历史翻一遍。 */
+        const val CATCH_UP_SESSIONS = 20
+
+        /** 每个会话最多拉这么多条。 */
+        const val CATCH_UP_MESSAGES = 20
+
+        /** 只补最近 30 分钟有动静的会话；更早的没有及时回复的意义。 */
+        const val CATCH_UP_MAX_AGE_SEC = 30 * 60L
+
+        /** 一次补拉的总预算，超时立即收手，避免拖慢启动后的首轮回复。 */
+        const val CATCH_UP_BUDGET_MS = 25_000L
     }
 }

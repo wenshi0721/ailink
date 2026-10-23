@@ -54,8 +54,8 @@ android {
         applicationId = "com.jiuguan.ailink"
         minSdk = 24
         targetSdk = 34
-        versionCode = 23
-        versionName = "1.1.3"
+        versionCode = 24
+        versionName = "1.1.4"
     }
 
     // 正式签名：见文件顶部 signingProps 的说明
@@ -73,8 +73,15 @@ android {
     buildTypes {
         debug {
             isMinifyEnabled = false
-            applicationIdSuffix = ".debug"
+            // 不加 .debug 包名后缀：真机复现需要能直接覆盖已安装的正式版。
+            // 后缀会让包名变成 ...ailink.debug，系统视为另一个应用 —— 覆盖安装失败，
+            // 且已装好的 350 MB 容器运行时（/data/data/<pkg>/files/runtime）用不上，只能重装。
+            // 包名一致后 `adb install -r` 会原地升级并保留全部数据。
+            // 同理必须沿用正式签名，否则 INSTALL_FAILED_UPDATE_INCOMPATIBLE（签名冲突）。
             versionNameSuffix = "-debug"
+            if (signingProps.isNotEmpty()) {
+                signingConfig = signingConfigs.getByName("release")
+            }
         }
         release {
             isMinifyEnabled = false

@@ -35,6 +35,9 @@ class ChatViewModel(
 
     val runtimeStates = container.botManager.states
 
+    /** 图片缓存文件名 → 本地文件；界面缩略图用，避免把绝对路径塞进 UI 层。 */
+    fun imageFile(cache: String): java.io.File? = container.imagePrep.cacheFile(cache)
+
     var input by mutableStateOf("")
         private set
 

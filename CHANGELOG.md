@@ -7,6 +7,23 @@
 
 ## [未发布]
 
+## [1.1.4] - 2026-10-23
+
+### 新增
+
+- **断线消息补拉**：WebSocket 重连后主动调用历史接口，把断线窗口内到达的消息补回来（NapCat 不重放断线期间的事件）；限最近活跃会话、每会话条数与 25 秒总预算，并做节流；超过 10 分钟的消息只入库、不触发回复
+- **聊天页图片展示**：消息附带的图片落库并生成本地缓存（`filesDir/imgcache`），聊天页显示缩略图；历史图片只读本地副本，不再请求会过期的图床地址
+- **引用回复上下文**：被引用的消息按 platformMsgId 从本地库反查（文本 + 图片），一并交给模型理解
+- **图片缓存复用**：本地缓存文件名回填到消息记录，后续追问与引用可重新读图，无需重复下载
+
+### 变更
+
+- 数据库升级到 v4：`messages` 增加 `imagesJson` 列（默认空串），历史消息不回填
+
+### 修复
+
+- 导出日志在应用重启后丢失现场：会话日志改为同步落盘（512 KB 滚动上限），导出内容不再受进程生命周期影响
+
 ## [1.1.3] - 2026-10-23
 
 ### 变更
@@ -72,7 +89,8 @@
 - 内置 QQ 运行时首次登录需第二块屏幕扫码（平台安全策略）
 - NapCat 组件禁止商用，含该组件的 APK 不可商业分发（详见 THIRD-PARTY-NOTICES.md）
 
-[未发布]: https://github.com/wenshi0721/ailink/compare/1.1.3...HEAD
+[未发布]: https://github.com/wenshi0721/ailink/compare/1.1.4...HEAD
+[1.1.4]: https://github.com/wenshi0721/ailink/releases/tag/1.1.4
 [1.1.3]: https://github.com/wenshi0721/ailink/releases/tag/1.1.3
 [1.1.2]: https://github.com/wenshi0721/ailink/releases/tag/1.1.2
 [1.1.1]: https://github.com/wenshi0721/ailink/releases/tag/1.1.1

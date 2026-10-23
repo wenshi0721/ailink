@@ -41,6 +41,9 @@ class QqBridgeService : Service() {
         private const val CHANNEL_ID = "qq_runtime"
         private const val NOTIFICATION_ID = 3001
 
+        /** 超过这个时长没有重启过，视为新的一轮故障，重启计数归零。 */
+        private const val RESET_WINDOW_MS = 3_600_000L
+
         private val _running = MutableStateFlow(false)
         val running: StateFlow<Boolean> = _running.asStateFlow()
 
@@ -226,17 +229,27 @@ class QqBridgeService : Service() {
             val window = if (napcatSelfHealing) 180_000L else 90_000L
             if (now - offlineSince < window) continue
 
-            if (now - lastRelaunchAt < 3_600_000 && relaunchCount >= 3) {
-                appendLog("[app] 已连续重启 3 次，暂缓自动恢复，请手动点「启动 QQ」")
-                offlineSince = now
-                continue
+            // 距上次重启超过 1 小时，视为新的一轮故障，计数归零
+            if (now - lastRelaunchAt > RESET_WINDOW_MS) relaunchCount = 0
+
+            // 连续重启的退避阶梯：前 3 次即时重试，之后逐步拉长间隔。
+            // 旧逻辑是「1 小时内满 3 次就静默到满 1 小时」，那等于把"没人管"
+            // 当成默认结果——这正是一天里偶发"掉了就再也没自己起来"的来源。
+            val backoff = when {
+                relaunchCount < 3 -> 0L
+                relaunchCount == 3 -> 5 * 60_000L
+                relaunchCount == 4 -> 15 * 60_000L
+                else -> 30 * 60_000L
             }
-            if (now - lastRelaunchAt > 3_600_000) relaunchCount = 0
+            if (backoff > 0 && now - lastRelaunchAt < backoff) continue
 
             relaunchCount += 1
             lastRelaunchAt = now
             offlineSince = now
-            appendLog("[app] 离线超过 ${window / 1000} 秒，第 $relaunchCount 次重启 QQ 容器")
+            appendLog(
+                "[app] 离线超过 ${window / 1000} 秒，第 $relaunchCount 次重启 QQ 容器" +
+                    if (backoff > 0) "（仍离线则按 ${backoff / 60_000} 分钟阶梯重试）" else ""
+            )
             updateNotification("正在重启 QQ…")
             relaunch()
         }
@@ -303,6 +316,9 @@ class QqBridgeService : Service() {
             // 这两行每次登录会各命中一次，只在首次迁移时落一条日志，
             // 否则日志里看不到"登录已就绪"这个关键锚点（NapCat 自己不打印在线）
             if (!wasLoggedIn) appendLog("[app] 登录成功")
+            // 扫码成功后凭据会重新生效，界面上的「登录态已失效」提示必须同步撤掉
+            _loginExpired.value = false
+            _quickLoginFailed.value = false
             if (_offline.value) {
                 _offline.value = false
                 appendLog("[app] QQ 已恢复在线")
@@ -321,13 +337,19 @@ class QqBridgeService : Service() {
             napcatSelfHealing = true
             appendLog("[app] NapCat 正在自行重启 Worker，容器重启顺延")
         }
-        if (line.contains("登录态已失效")) {
+        // 凭据作废时 NapCat 打的是 `快速登录错误： <errMsg>`，errMsg 为
+        // 「你的用户身份已失效，为保证账号安全，请你重新登录。」——既不是
+        // 「登录态已失效」也不是「快速登录失败」，必须按实际文案匹配，否则界面的
+        // 「登录态已失效，需要重新扫码」提示永远不会出现。
+        if (line.contains("登录态已失效") || line.contains("你的用户身份已失效")) {
             _quickLoginFailed.value = true
             _loginExpired.value = true
             appendLog("[app] 登录态已失效：需要重新扫一次码；扫码成功后快速登录才会再生效")
             updateNotification("登录态失效，请重新扫码")
         }
-        if (line.contains("快速登录失败")) {
+        if (!_loginExpired.value &&
+            (line.contains("快速登录失败") || line.contains("快速登录错误") || line.contains("快速登录异常"))
+        ) {
             _quickLoginFailed.value = true
             appendLog("[app] 快速登录失败：QQ 号可能有误，或该号尚未在本机成功登录过；已回退为二维码")
         }

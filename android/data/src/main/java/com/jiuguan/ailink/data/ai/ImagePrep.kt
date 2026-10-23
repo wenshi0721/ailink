@@ -12,6 +12,7 @@ import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.io.ByteArrayOutputStream
+import java.io.File
 import java.util.concurrent.TimeUnit
 
 /**
@@ -19,16 +20,32 @@ import java.util.concurrent.TimeUnit
  *
  * 桥接端下发的可能是 PNG / JPEG / GIF / WebP：动图只取首帧（BitmapFactory 的默认行为），
  * 带透明通道的贴图先铺白底再压 JPEG，否则透明区域会变成黑块。
+ *
+ * 第二个职责是**本地缓存**：QQ 图床地址带 `rkey` 鉴权、几十分钟到几小时就失效，
+ * 只存 URL 等于"当下能用、下一轮就没了"。因此成功转码后把 JPEG 落到
+ * `filesDir/imgcache/`，后续轮次直接读文件，不再依赖网络。
+ *
+ * @param cacheDir 缓存目录；传 null 表示只用内存（单测/无 Context 场景）。
  */
-class ImagePrep {
+class ImagePrep(private val cacheDir: File? = null) {
+
+    /** 一张已就绪的图片：可直接塞进请求的 data URL + 缓存文件名（供入库/回看）。 */
+    data class Prepared(val dataUrl: String, val cache: String)
 
     private val client = OkHttpClient.Builder()
         .connectTimeout(8, TimeUnit.SECONDS)
         .readTimeout(12, TimeUnit.SECONDS)
         .build()
 
-    /** 下载 + 转码；任何环节失败返回 null，由调用方降级为纯文本。 */
-    suspend fun toDataUrl(url: String): String? = withContext(Dispatchers.IO) {
+    /**
+     * 优先读本地缓存，其次下载转码并落盘。
+     *
+     * [file] 是桥接端的内部文件名，比 URL 稳定（URL 里的 rkey 会变），有它就优先用它做键。
+     */
+    suspend fun prepare(url: String, file: String = ""): Prepared? = withContext(Dispatchers.IO) {
+        val key = cacheKey(url, file)
+        readCache(key)?.let { return@withContext Prepared(it, cacheName(key)) }
+
         runCatching {
             val bytes = download(url)
             val bitmap = decode(bytes)
@@ -36,7 +53,8 @@ class ImagePrep {
             val jpeg = flattenToJpeg(scaled)
             if (scaled !== bitmap) scaled.recycle()
             bitmap.recycle()
-            "data:image/jpeg;base64," + Base64.encodeToString(jpeg, Base64.NO_WRAP)
+            writeCache(key, jpeg)
+            Prepared("data:image/jpeg;base64," + Base64.encodeToString(jpeg, Base64.NO_WRAP), cacheName(key))
         }.getOrElse { e ->
             SessionLog.add(
                 "vision",
@@ -45,6 +63,77 @@ class ImagePrep {
             null
         }
     }
+
+    /** 只从本地缓存取；命中返回 data URL。历史轮次与引用回复走这条路，不产生网络请求。 */
+    suspend fun fromCache(cache: String): String? = withContext(Dispatchers.IO) {
+        if (cache.isBlank()) return@withContext null
+        val file = File(cacheDir ?: return@withContext null, cache)
+        if (!file.isFile) return@withContext null
+        runCatching {
+            file.setLastModified(System.currentTimeMillis()) // LRU 用
+            "data:image/jpeg;base64," + Base64.encodeToString(file.readBytes(), Base64.NO_WRAP)
+        }.getOrNull()
+    }
+
+    /** 下载 + 转码；任何环节失败返回 null，由调用方降级为纯文本。 */
+    suspend fun toDataUrl(url: String): String? = prepare(url)?.dataUrl
+
+    private fun cacheKey(url: String, file: String): String {
+        val name = file.ifBlank { url }
+        return sha1(name).take(32)
+    }
+
+    private fun cacheName(key: String): String = "$key.jpg"
+
+    private fun readCache(key: String): String? {
+        val dir = cacheDir ?: return null
+        val file = File(dir, cacheName(key))
+        if (!file.isFile || file.length() <= 0L) return null
+        return runCatching {
+            file.setLastModified(System.currentTimeMillis())
+            "data:image/jpeg;base64," + Base64.encodeToString(file.readBytes(), Base64.NO_WRAP)
+        }.getOrNull()
+    }
+
+    private fun writeCache(key: String, jpeg: ByteArray) {
+        val dir = cacheDir ?: return
+        runCatching {
+            if (!dir.isDirectory) dir.mkdirs()
+            File(dir, cacheName(key)).writeBytes(jpeg)
+        }
+    }
+
+    /** 缓存文件名 → 本地文件；不存在返回 null。供界面渲染缩略图。 */
+    fun cacheFile(cache: String): File? {
+        val dir = cacheDir ?: return null
+        if (cache.isBlank()) return null
+        return File(dir, cache).takeIf { it.isFile }
+    }
+
+    /**
+     * LRU 清理：按文件数 + 总字节双上限裁剪。
+     * 由 Application 启动时调用一次，避免长期使用后无限增长。
+     */
+    fun prune(maxFiles: Int = MAX_CACHE_FILES, maxBytes: Long = MAX_CACHE_BYTES) {
+        val dir = cacheDir ?: return
+        if (!dir.isDirectory) return
+        runCatching {
+            val files = dir.listFiles()?.filter { it.isFile }?.sortedBy { it.lastModified() }.orEmpty()
+            var total = files.sumOf { it.length() }
+            var count = files.size
+            for (file in files) {
+                if (count <= maxFiles && total <= maxBytes) break
+                total -= file.length()
+                count -= 1
+                file.delete()
+            }
+        }
+    }
+
+    private fun sha1(text: String): String =
+        java.security.MessageDigest.getInstance("SHA-1")
+            .digest(text.toByteArray())
+            .joinToString("") { "%02x".format(it) }
 
     private fun download(url: String): ByteArray {
         require(url.startsWith("http")) { "图片地址不是 http(s)" }
@@ -106,6 +195,11 @@ class ImagePrep {
         const val MAX_EDGE = 1024
         const val JPEG_QUALITY = 85
         const val MAX_BYTES = 5 * 1024 * 1024
+
+        /** 缓存上限：200 张 / 40 MB，按最后访问时间 LRU 淘汰。 */
+        const val MAX_CACHE_FILES = 200
+        const val MAX_CACHE_BYTES = 40L * 1024L * 1024L
+
         const val USER_AGENT =
             "Mozilla/5.0 (Linux; Android 13; Mobile) AppleWebKit/537.36 " +
                 "(KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36"
