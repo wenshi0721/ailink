@@ -12,8 +12,24 @@ data class IncomingMessage(
     val text: String,
     val atMe: Boolean,
     val platformMsgId: String,
-    val timestamp: Long
+    val timestamp: Long,
+    /** 本条消息附带的图片（顺序与消息段一致）；是否真的送进模型由识图能力决定。 */
+    val images: List<IncomingImage> = emptyList()
 )
+
+/**
+ * 一条消息里的图片引用（对应 OneBot image 段）。
+ *
+ * 只有 [url] 可下载；[file] 是桥接端内部文件名，仅用于日志排查。
+ * 表情包与聊天图片都会走到这里，格式可能是 GIF/WebP/PNG/JPEG，统一在 `ImagePrep` 里转码。
+ */
+data class IncomingImage(
+    val url: String = "",
+    val file: String = "",
+    val summary: String = ""
+) {
+    val isUsable: Boolean get() = url.isNotBlank()
+}
 
 /** 接入层事件。 */
 sealed interface GatewayEvent {

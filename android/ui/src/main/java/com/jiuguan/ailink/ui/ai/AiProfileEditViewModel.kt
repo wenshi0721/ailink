@@ -9,7 +9,9 @@ import com.jiuguan.ailink.assembly.AppContainer
 import com.jiuguan.ailink.data.local.AiProfileEntity
 import com.jiuguan.ailink.model.AiVendor
 import com.jiuguan.ailink.model.AiVendorCatalog
+import com.jiuguan.ailink.model.VisionSupport
 import com.jiuguan.ailink.util.Ids
+import kotlinx.coroutines.async
 import kotlinx.coroutines.launch
 
 data class AiForm(
@@ -20,7 +22,9 @@ data class AiForm(
     val model: String = "",
     val temperature: Float = 0.8f,
     val maxTokens: Float = 512f,
-    val systemPrompt: String = ""
+    val systemPrompt: String = "",
+    /** 识图开关：开启时按自动检测结论决定是否把图片送进模型。 */
+    val visionEnabled: Boolean = true
 ) {
     companion object {
         fun from(entity: AiProfileEntity) = AiForm(
@@ -31,7 +35,8 @@ data class AiForm(
             model = entity.model,
             temperature = entity.temperature,
             maxTokens = entity.maxTokens.toFloat(),
-            systemPrompt = entity.systemPrompt
+            systemPrompt = entity.systemPrompt,
+            visionEnabled = entity.visionEnabled
         )
 
         fun preset() = AiVendorCatalog.byId(DEFAULT_VENDOR_ID)?.let { vendor ->
@@ -68,6 +73,13 @@ class AiProfileEditViewModel(
     var saved by mutableStateOf(false)
         private set
 
+    /** 识图能力的当前结论（名单/缓存），供界面展示。 */
+    var visionStatus by mutableStateOf(VisionSupport.UNKNOWN)
+        private set
+
+    var visionChecking by mutableStateOf(false)
+        private set
+
     private var existing: AiProfileEntity? = null
 
     val isNew: Boolean get() = profileId.isBlank()
@@ -85,6 +97,21 @@ class AiProfileEditViewModel(
             } else {
                 form = AiForm.preset()
             }
+            refreshVisionStatus()
+        }
+    }
+
+    /** 只读现有结论，不发网络请求。 */
+    private fun refreshVisionStatus() {
+        visionStatus = container.visionProbe.cached(toEntity(form))
+    }
+
+    fun setVisionEnabled(enabled: Boolean) {
+        update { it.copy(visionEnabled = enabled) }
+        if (!enabled) {
+            visionStatus = VisionSupport.UNSUPPORTED
+        } else {
+            refreshVisionStatus()
         }
     }
 
@@ -123,6 +150,7 @@ class AiProfileEditViewModel(
         temperature = current.temperature,
         maxTokens = current.maxTokens.toInt(),
         systemPrompt = current.systemPrompt.trim(),
+        visionEnabled = current.visionEnabled,
         createdAt = existing?.createdAt ?: System.currentTimeMillis()
     )
 
@@ -137,12 +165,18 @@ class AiProfileEditViewModel(
             return
         }
         testing = true
+        visionChecking = current.visionEnabled
         testMessage = ""
         viewModelScope.launch {
-            container.aiClient.test(toEntity(current)).fold(
+            val entity = toEntity(current)
+            // 连通性与识图检测互不依赖，并行发出，避免测试按钮等两次超时。
+            val probe = async { container.visionProbe.detect(entity, force = true) }
+            container.aiClient.test(entity).fold(
                 onSuccess = { reply -> testMessage = "调用成功，模型回复：「${reply.take(40)}」" },
                 onFailure = { e -> testMessage = "调用失败：${e.message ?: "未知错误"}" }
             )
+            if (current.visionEnabled) visionStatus = probe.await()
+            visionChecking = false
             testing = false
         }
     }

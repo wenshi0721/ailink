@@ -14,7 +14,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         ConversationEntity::class,
         MessageEntity::class
     ],
-    version = 2,
+    version = 3,
     exportSchema = false
 )
 abstract class AiLinkDatabase : RoomDatabase() {
@@ -39,6 +39,18 @@ abstract class AiLinkDatabase : RoomDatabase() {
             }
         }
 
+        /**
+         * v2 → v3：新增 ai_profiles.visionEnabled，作为识图能力的用户开关。
+         * 默认 1（自动检测后启用），既有配置升级后行为与升级前一致。
+         */
+        private val MIGRATION_2_3 = object : Migration(2, 3) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "ALTER TABLE ai_profiles ADD COLUMN visionEnabled INTEGER NOT NULL DEFAULT 1"
+                )
+            }
+        }
+
         @Volatile
         private var instance: AiLinkDatabase? = null
 
@@ -49,7 +61,7 @@ abstract class AiLinkDatabase : RoomDatabase() {
                     AiLinkDatabase::class.java,
                     DB_NAME
                 )
-                    .addMigrations(MIGRATION_1_2)
+                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
                     .fallbackToDestructiveMigration()
                     .build()
                     .also { instance = it }

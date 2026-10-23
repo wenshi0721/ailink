@@ -16,7 +16,6 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
-import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
@@ -223,8 +222,8 @@ class OneBotGateway(
         if (senderId > 0 && senderId == sid) return
 
         val raw = root.jStr("raw_message")
-        val (text, atMe) = flatten(root["message"], sid, raw)
-        if (text.isBlank()) return
+        val parsed = parseMessage(root["message"], sid, raw)
+        if (parsed.text.isBlank()) return
 
         val sender = root["sender"] as? JsonObject
         val senderName = sender
@@ -254,18 +253,15 @@ class OneBotGateway(
                     isGroup = isGroup,
                     senderId = senderId,
                     senderName = senderName.ifBlank { "对方" },
-                    text = text,
-                    atMe = atMe,
+                    text = parsed.text,
+                    atMe = parsed.atMe,
                     platformMsgId = root.jStr("message_id"),
-                    timestamp = timestamp
+                    timestamp = timestamp,
+                    images = parsed.images
                 )
             )
         )
     }
-
-    /** 帧解析逻辑见 [flattenMessage]（同包的纯函数，可单测）。 */
-    private fun flatten(message: JsonElement?, sid: Long, raw: String): Pair<String, Boolean> =
-        flattenMessage(message, sid, raw)
 
     override suspend fun sendText(peerKey: String, isGroup: Boolean, text: String): Boolean {
         var ws = socket

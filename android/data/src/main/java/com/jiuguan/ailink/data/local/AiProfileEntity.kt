@@ -19,6 +19,11 @@ data class AiProfileEntity(
     val maxTokens: Int = 512,
     /** 全局系统提示词，与账号人设叠加。 */
     val systemPrompt: String = "",
+    /**
+     * 识图开关：true = 自动检测后按结论启用（默认），false = 强制只发文本。
+     * 检测结论不落库，见 AppPrefs 的 vision 缓存。
+     */
+    val visionEnabled: Boolean = true,
     val createdAt: Long = System.currentTimeMillis()
 ) {
     /** 未配置接口地址时使用内置的本地模拟回复。 */

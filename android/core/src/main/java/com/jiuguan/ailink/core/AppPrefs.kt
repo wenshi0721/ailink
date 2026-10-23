@@ -66,6 +66,21 @@ class AppPrefs(context: Context) {
         get() = sp.getLong(KEY_LAST_UPDATE_CHECK, 0L)
         set(value) = sp.edit().putLong(KEY_LAST_UPDATE_CHECK, value).apply()
 
+    /**
+     * 识图能力检测结果缓存，按配置 id 存一行「状态|地址|模型」。
+     * 放这里而不是数据库：属于可丢弃的运行期推断结果，配置改动即失效，不值得占据表结构。
+     */
+    fun visionCache(profileId: String): String =
+        sp.getString(KEY_VISION_CACHE + profileId, "").orEmpty()
+
+    fun setVisionCache(profileId: String, value: String) {
+        if (value.isBlank()) {
+            sp.edit().remove(KEY_VISION_CACHE + profileId).apply()
+        } else {
+            sp.edit().putString(KEY_VISION_CACHE + profileId, value).apply()
+        }
+    }
+
     private companion object {
         const val KEY_ACTIVE_ACCOUNT = "active_account_id"
         const val KEY_QQ_UIN = "qq_uin"
@@ -73,5 +88,6 @@ class AppPrefs(context: Context) {
         const val KEY_NOTIFY_ASKED = "notification_asked"
         const val KEY_UPDATE_MIRROR = "update_mirror_base"
         const val KEY_LAST_UPDATE_CHECK = "last_update_check"
+        const val KEY_VISION_CACHE = "vision_cache_"
     }
 }

@@ -137,4 +137,54 @@ class OneBotParsingTest {
         assertEquals("", root.jStr("not_exist"))
         assertEquals(0L, root.jLong("not_exist"))
     }
+
+    // ---------- 图片引用（识图链路依赖） ----------
+
+    @Test
+    fun `数组格式 提取图片 url 与摘要`() {
+        val root = json(
+            """
+            {"message":[
+              {"type":"image","data":{"file":"a.image","url":"https://multimedia.nt.qq.com.cn/x?rkey=1","summary":"[动画表情]"}}
+            ]}
+            """.trimIndent()
+        )
+        val parsed = parseMessage(root["message"], sid, "")
+        assertEquals("[图片]", parsed.text)
+        assertEquals(1, parsed.images.size)
+        assertEquals("https://multimedia.nt.qq.com.cn/x?rkey=1", parsed.images[0].url)
+        assertEquals("[动画表情]", parsed.images[0].summary)
+        assertTrue(parsed.images[0].isUsable)
+    }
+
+    @Test
+    fun `只有文件名没有 url 时仍记录图片但不视为可用`() {
+        val root = json("""{"message":[{"type":"image","data":{"file":"a.png"}}]}""")
+        val parsed = parseMessage(root["message"], sid, "")
+        assertEquals(1, parsed.images.size)
+        assertFalse(parsed.images[0].isUsable)
+    }
+
+    @Test
+    fun `CQ码 提取图片 url 且保留文字`() {
+        val root = json("""{"message":"[CQ:image,file=x.png,url=https://gxh.vip.qq.com/a.gif]看这个"}""")
+        val parsed = parseMessage(root["message"], sid, "")
+        assertEquals("看这个", parsed.text)
+        assertEquals("https://gxh.vip.qq.com/a.gif", parsed.images.single().url)
+    }
+
+    @Test
+    fun `纯图片 CQ 码不再得到空文本`() {
+        val root = json("""{"message":"[CQ:image,file=x.png,url=https://gxh.vip.qq.com/a.gif]"}""")
+        val parsed = parseMessage(root["message"], sid, "")
+        assertEquals("[图片]", parsed.text)
+        assertEquals(1, parsed.images.size)
+    }
+
+    @Test
+    fun `无图片的纯文本消息 images 为空`() {
+        val root = json("""{"message":"[CQ:at,qq=10086] 在吗"}""")
+        val parsed = parseMessage(root["message"], sid, "")
+        assertTrue(parsed.images.isEmpty())
+    }
 }

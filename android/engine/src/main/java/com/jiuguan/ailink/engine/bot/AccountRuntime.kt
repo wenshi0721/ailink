@@ -8,14 +8,20 @@ import com.jiuguan.ailink.data.gateway.IncomingMessage
 import com.jiuguan.ailink.data.gateway.MessageGateway
 import com.jiuguan.ailink.data.ai.AiClient
 import com.jiuguan.ailink.data.ai.ChatTurn
+import com.jiuguan.ailink.data.ai.ImagePrep
 import com.jiuguan.ailink.data.ai.LocalResponder
+import com.jiuguan.ailink.data.ai.VisionProbe
 import com.jiuguan.ailink.data.gateway.convIdOf
 import com.jiuguan.ailink.data.repo.AiRepository
 import com.jiuguan.ailink.data.repo.MessageRepository
 import com.jiuguan.ailink.model.ConnStatus
 import com.jiuguan.ailink.model.TriggerScope
+import com.jiuguan.ailink.model.VisionSupport
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -23,6 +29,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withTimeoutOrNull
 import com.jiuguan.ailink.engine.service.RuntimeState
 
 /**
@@ -35,6 +42,8 @@ class AccountRuntime(
     private val messageRepository: MessageRepository,
     private val aiRepository: AiRepository,
     private val aiClient: AiClient,
+    private val visionProbe: VisionProbe,
+    private val imagePrep: ImagePrep,
     private val onStateChanged: (RuntimeState) -> Unit
 ) {
 
@@ -138,7 +147,8 @@ class AccountRuntime(
     private suspend fun deliverReply(convId: String, message: IncomingMessage) {
         com.jiuguan.ailink.core.SessionLog.add(
             "engine",
-            "处理消息 peer=${message.peerKey} group=${message.isGroup} 文本=${message.text.take(20)}"
+            "处理消息 peer=${message.peerKey} group=${message.isGroup} " +
+                "图片=${message.images.size} 文本=${message.text.take(20)}"
         )
         val profile = aiRepository.resolve(account.aiProfileId)
 
@@ -147,9 +157,10 @@ class AccountRuntime(
                 localReply(convId, message.text)
 
             else -> {
+                val images = prepareImages(profile, message)
                 val turns = buildTurns(profile, convId, message.text)
                 var text: String? = null
-                aiClient.complete(profile, turns).fold(
+                aiClient.complete(profile, turns, imageDataUrls = images).fold(
                     onSuccess = { text = it },
                     onFailure = { error ->
                         com.jiuguan.ailink.core.SessionLog.add(
@@ -201,6 +212,35 @@ class AccountRuntime(
         return reply
     }
 
+    /**
+     * 只有「开关打开 + 判定支持识图」时才下载图片；
+     * 检测与下载各有总时长上限，超时就先发纯文本，不阻塞对话。
+     */
+    private suspend fun prepareImages(
+        profile: AiProfileEntity,
+        message: IncomingMessage
+    ): List<String> {
+        val usable = message.images.filter { it.isUsable }.take(MAX_IMAGES_PER_MESSAGE)
+        if (usable.isEmpty()) return emptyList()
+
+        val support = withTimeoutOrNull(VISION_DETECT_TIMEOUT_MS) {
+            visionProbe.detect(profile)
+        } ?: VisionSupport.UNKNOWN
+        if (support != VisionSupport.SUPPORTED) return emptyList()
+
+        val prepared = withTimeoutOrNull(IMAGE_PREPARE_TIMEOUT_MS) {
+            coroutineScope {
+                usable.map { image -> async { imagePrep.toDataUrl(image.url) } }.awaitAll()
+            }
+        }
+        val dataUrls = prepared?.filterNotNull().orEmpty()
+        com.jiuguan.ailink.core.SessionLog.add(
+            "vision",
+            "本轮附图 ${dataUrls.size}/${usable.size} 张（配置「${profile.name}」）"
+        )
+        return dataUrls
+    }
+
     private suspend fun buildTurns(
         profile: AiProfileEntity,
         convId: String,
@@ -247,5 +287,10 @@ class AccountRuntime(
     private companion object {
         const val STALE_WINDOW_MS = 10 * 60_000L
         const val CONTEXT_SIZE = 8
+
+        /** 单条消息最多附 3 张图：再多对聊天场景收益很小，却会显著拉长响应时间。 */
+        const val MAX_IMAGES_PER_MESSAGE = 3
+        const val VISION_DETECT_TIMEOUT_MS = 15_000L
+        const val IMAGE_PREPARE_TIMEOUT_MS = 12_000L
     }
 }

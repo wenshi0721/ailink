@@ -7,6 +7,17 @@
 
 ## [未发布]
 
+## [1.1.2] - 2026-10-23
+
+### 新增
+
+- **图片识别**：AI 配置新增「图片识别」开关与自动检测（模型名快判 + 一张内置测试图实测，结论按地址与模型缓存，配置改动自动失效）；仅在判定支持时，把收到的图片、表情包下载转码为 JPEG 后作为多模态输入交给模型；不支持或关闭时保持原有 `[图片]` 文本行为
+- 消息解析保留 OneBot `image` 段的地址与摘要，纯图片消息不再因文本为空被丢弃
+
+### 变更
+
+- 数据库升级到 v3：`ai_profiles` 增加 `visionEnabled` 列（默认开启），带 `MIGRATION_2_3`，既有配置升级后行为与升级前一致
+
 ## [1.1.1] - 2026-10-23
 
 ### 新增
@@ -48,6 +59,7 @@
 - 内置 QQ 运行时首次登录需第二块屏幕扫码（平台安全策略）
 - NapCat 组件禁止商用，含该组件的 APK 不可商业分发（详见 THIRD-PARTY-NOTICES.md）
 
-[未发布]: https://github.com/wenshi0721/ailink/compare/1.1.1...HEAD
+[未发布]: https://github.com/wenshi0721/ailink/compare/1.1.2...HEAD
+[1.1.2]: https://github.com/wenshi0721/ailink/releases/tag/1.1.2
 [1.1.1]: https://github.com/wenshi0721/ailink/releases/tag/1.1.1
 [1.1.0]: https://github.com/wenshi0721/ailink/releases/tag/1.1.0

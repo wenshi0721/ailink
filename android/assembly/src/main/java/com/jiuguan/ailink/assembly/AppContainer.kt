@@ -3,6 +3,8 @@ package com.jiuguan.ailink.assembly
 import android.content.Context
 import com.jiuguan.ailink.data.local.AiLinkDatabase
 import com.jiuguan.ailink.data.ai.AiClient
+import com.jiuguan.ailink.data.ai.ImagePrep
+import com.jiuguan.ailink.data.ai.VisionProbe
 import com.jiuguan.ailink.data.repo.AccountRepository
 import com.jiuguan.ailink.data.repo.AiRepository
 import com.jiuguan.ailink.data.repo.MessageRepository
@@ -32,6 +34,8 @@ class AppContainer(context: Context) {
     val aiRepository = AiRepository(database.aiProfileDao(), database.accountDao())
     val messageRepository = MessageRepository(database.conversationDao(), database.messageDao())
     val aiClient = AiClient()
+    val imagePrep = ImagePrep()
+    val visionProbe = VisionProbe(aiClient, prefs)
     val updateRepository = UpdateRepository(appContext, prefs)
 
     val botManager = BotManager(
@@ -39,7 +43,10 @@ class AppContainer(context: Context) {
         prefs = prefs,
         accountRepository = accountRepository,
         messageRepository = messageRepository,
-        aiRepository = aiRepository
+        aiRepository = aiRepository,
+        aiClient = aiClient,
+        visionProbe = visionProbe,
+        imagePrep = imagePrep
     )
 
     private val appScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)

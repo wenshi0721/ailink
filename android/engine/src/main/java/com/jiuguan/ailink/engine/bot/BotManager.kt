@@ -5,6 +5,8 @@ import com.jiuguan.ailink.core.AppPrefs
 import com.jiuguan.ailink.data.local.AccountEntity
 import com.jiuguan.ailink.data.gateway.GatewayFactory
 import com.jiuguan.ailink.data.ai.AiClient
+import com.jiuguan.ailink.data.ai.ImagePrep
+import com.jiuguan.ailink.data.ai.VisionProbe
 import com.jiuguan.ailink.data.gateway.peerKeyOf
 import com.jiuguan.ailink.data.repo.AccountRepository
 import com.jiuguan.ailink.data.repo.AiRepository
@@ -30,11 +32,13 @@ class BotManager(
     private val prefs: AppPrefs,
     private val accountRepository: AccountRepository,
     private val messageRepository: MessageRepository,
-    private val aiRepository: AiRepository
+    private val aiRepository: AiRepository,
+    private val aiClient: AiClient,
+    private val visionProbe: VisionProbe,
+    private val imagePrep: ImagePrep
 ) {
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-    private val aiClient = AiClient()
     private val runtimes = ConcurrentHashMap<String, AccountRuntime>()
 
     private val _states = MutableStateFlow<Map<String, RuntimeState>>(emptyMap())
@@ -50,6 +54,8 @@ class BotManager(
             messageRepository = messageRepository,
             aiRepository = aiRepository,
             aiClient = aiClient,
+            visionProbe = visionProbe,
+            imagePrep = imagePrep,
             onStateChanged = { state -> publish(state) }
         )
         runtimes[account.id] = runtime

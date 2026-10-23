@@ -19,6 +19,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Slider
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -29,13 +30,17 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.navigation.NavController
+import com.jiuguan.ailink.model.VisionSupport
 import com.jiuguan.ailink.ui.common.AppCard
 import com.jiuguan.ailink.ui.common.BannerTone
 import com.jiuguan.ailink.ui.common.InfoBanner
 import com.jiuguan.ailink.ui.common.LabeledField
 import com.jiuguan.ailink.ui.common.MutedText
 import com.jiuguan.ailink.ui.common.SoftDivider
+import com.jiuguan.ailink.ui.common.TagChip
+import com.jiuguan.ailink.ui.common.appSwitchColors
 import com.jiuguan.ailink.ui.common.appViewModel
+import com.jiuguan.ailink.ui.theme.MutedGray
 import com.jiuguan.ailink.ui.theme.OnlineGreen
 import com.jiuguan.ailink.ui.theme.WarnAmber
 
@@ -131,6 +136,16 @@ fun AiProfileEditScreen(
 
             Spacer(Modifier.height(16.dp))
 
+            VisionCard(
+                enabled = form.visionEnabled,
+                status = vm.visionStatus,
+                checking = vm.visionChecking,
+                model = form.model,
+                onToggle = vm::setVisionEnabled
+            )
+
+            Spacer(Modifier.height(16.dp))
+
             AppCard {
                 Text(
                     text = "温度：" + String.format("%.1f", form.temperature),
@@ -201,6 +216,81 @@ fun AiProfileEditScreen(
             }
 
             Spacer(Modifier.height(36.dp))
+        }
+    }
+}
+
+/**
+ * 识图开关与检测结论。
+ *
+ * 结论来自模型名快判或一次真实探测，界面只负责解释「当前会不会把图片发给模型」，
+ * 具体判定逻辑在 data 层的 VisionProbe 里，避免 UI 与判定规则耦合。
+ */
+@Composable
+private fun VisionCard(
+    enabled: Boolean,
+    status: VisionSupport,
+    checking: Boolean,
+    model: String,
+    onToggle: (Boolean) -> Unit
+) {
+    AppCard {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = "图片识别",
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+                Spacer(Modifier.height(4.dp))
+                MutedText(
+                    if (enabled) {
+                        "自动检测当前模型能否识图；支持时把收到的图片转码后交给模型理解。"
+                    } else {
+                        "已关闭：图片消息只以「[图片]」参与对话。"
+                    }
+                )
+            }
+            Spacer(Modifier.width(12.dp))
+            Switch(
+                checked = enabled,
+                onCheckedChange = onToggle,
+                colors = appSwitchColors()
+            )
+        }
+
+        if (!enabled) return@AppCard
+
+        Spacer(Modifier.height(10.dp))
+        SoftDivider()
+        Spacer(Modifier.height(10.dp))
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            TagChip(
+                text = when {
+                    checking -> "检测中"
+                    status == VisionSupport.SUPPORTED -> "支持识图"
+                    status == VisionSupport.UNSUPPORTED -> "不支持"
+                    else -> "未检测"
+                },
+                color = when {
+                    checking -> WarnAmber
+                    status == VisionSupport.SUPPORTED -> OnlineGreen
+                    status == VisionSupport.UNSUPPORTED -> MutedGray
+                    else -> WarnAmber
+                }
+            )
+            Spacer(Modifier.width(8.dp))
+            MutedText(
+                when {
+                    checking -> "正在用一张测试图请求接口…"
+                    status == VisionSupport.SUPPORTED ->
+                        "模型 ${model.ifBlank { "未填" }} 接受图片输入，图片消息会附带图片内容。"
+                    status == VisionSupport.UNSUPPORTED ->
+                        "当前模型只接受文本，图片消息仍按「[图片]」处理。"
+                    else -> "点下方「测试调用」可检测；确认前图片按纯文本处理。"
+                },
+                modifier = Modifier.weight(1f)
+            )
         }
     }
 }

@@ -297,8 +297,12 @@ class QqBridgeService : Service() {
         }
         // 登录完成 / worker 重建完成：都会重新走一遍 InitNapCat → initAdapters
         if (line.contains("协议适配器初始化完成") || line.contains("本账号数据/缓存目录")) {
+            val wasLoggedIn = _loggedIn.value
             _loggedIn.value = true
             napcatSelfHealing = false
+            // 这两行每次登录会各命中一次，只在首次迁移时落一条日志，
+            // 否则日志里看不到"登录已就绪"这个关键锚点（NapCat 自己不打印在线）
+            if (!wasLoggedIn) appendLog("[app] 登录成功")
             if (_offline.value) {
                 _offline.value = false
                 appendLog("[app] QQ 已恢复在线")
@@ -330,7 +334,11 @@ class QqBridgeService : Service() {
         if (line.contains("未找到该 QQ 历史登录记录")) {
             _quickLoginFailed.value = true
         }
-        if (line.contains("登录成功") || line.contains("账号信息") || line.contains("online=true")) {
+        // 旧版兜底：本机 NapCat 4.18.38 的登录流程并不打印「登录成功」，
+        // 保留是为了兼容其它桥接端/版本；已判过登录的不再重复落日志。
+        if (!_loggedIn.value &&
+            (line.contains("登录成功") || line.contains("账号信息") || line.contains("online=true"))
+        ) {
             _loggedIn.value = true
             appendLog("[app] 登录成功")
             updateNotification("QQ 已登录")
