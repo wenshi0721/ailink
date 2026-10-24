@@ -46,6 +46,15 @@ val signingProps = Properties().apply {
     if (f.exists()) f.inputStream().use { load(it) }
 }
 
+/**
+ * 版本号单一真源。
+ *
+ * debug 包的 versionCode 取 [BASE_VERSION_CODE] + 1：Android 只允许「同号或更高」覆盖安装，
+ * 调试包如果和正式版同号，遇到手机上装的是更高号（例如从别处装的构建）就会被
+ * INSTALL_FAILED_VERSION_DOWNGRADE 挡下。抬高 1 之后，任何 1.1.4 正式版都能被直接覆盖。
+ */
+val BASE_VERSION_CODE = 25
+
 android {
     namespace = "com.jiuguan.ailink"
     compileSdk = 34
@@ -54,8 +63,8 @@ android {
         applicationId = "com.jiuguan.ailink"
         minSdk = 24
         targetSdk = 34
-        versionCode = 24
-        versionName = "1.1.4"
+        versionCode = BASE_VERSION_CODE
+        versionName = "1.1.5"
     }
 
     // 正式签名：见文件顶部 signingProps 的说明
@@ -130,6 +139,16 @@ android {
         getByName("main") {
             // 容器安装脚本由 syncContainerScript 任务生成（单一真源在 tools/runtime/）
             assets.srcDir(layout.buildDirectory.dir("generated/containerAssets"))
+        }
+    }
+}
+
+// debug 变体的 versionCode 抬到正式版 +1，保证能覆盖已安装的正式包。
+// 放在 androidComponents 而不是 buildTypes 里：AGP 的 buildType DSL 没有 versionCode 字段。
+androidComponents {
+    onVariants(selector().withBuildType("debug")) { variant ->
+        variant.outputs.forEach { output ->
+            output.versionCode.set(BASE_VERSION_CODE + 1)
         }
     }
 }

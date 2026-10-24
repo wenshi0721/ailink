@@ -7,6 +7,24 @@
 
 ## [未发布]
 
+## [1.1.5] - 2026-10-24
+
+### 新增
+
+- **QQ 密码回退登录**：可在运行时页保存 QQ 密码（仅本机计算 MD5，用 Android Keystore 托管的 AES-GCM 密钥加密后落盘，明文不保存）；快速登录凭据被作废时自动用密码回退，免去重新扫码
+- **密码回退遇到人工验证的自动处置**：QQ 要求验证码/新设备验证时，NapCat 不会生成二维码，此时应用自动切回扫码模式并保持 6 小时，避免界面一直无码可扫
+- **NapCat 反检测加固开关**：一键写入 `o3HookMode=0` 与 6 项 `bypass`（首次改写保留 `.bak` 备份），可用开关随时退回默认配置
+- 运行时页新增 NapCat WebUI 入口
+
+### 修复
+
+- 连续点击「启动 QQ」或自愈抖动会把刚生成的二维码当场作废：增加启动冷却（两次启动最小间隔）
+- NapCat 自愈失败、退回二维码界面后仍继续空等：识别该状态后立即重启容器
+
+### 变更
+
+- debug 构建的 `versionCode` 固定为正式版 +1：调试包可直接覆盖同版本正式包，不再被 `INSTALL_FAILED_VERSION_DOWNGRADE` 拦下；版本号收敛为 `BASE_VERSION_CODE` 单一真源
+
 ## [1.1.4] - 2026-10-23
 
 ### 新增
@@ -89,7 +107,8 @@
 - 内置 QQ 运行时首次登录需第二块屏幕扫码（平台安全策略）
 - NapCat 组件禁止商用，含该组件的 APK 不可商业分发（详见 THIRD-PARTY-NOTICES.md）
 
-[未发布]: https://github.com/wenshi0721/ailink/compare/1.1.4...HEAD
+[未发布]: https://github.com/wenshi0721/ailink/compare/1.1.5...HEAD
+[1.1.5]: https://github.com/wenshi0721/ailink/releases/tag/1.1.5
 [1.1.4]: https://github.com/wenshi0721/ailink/releases/tag/1.1.4
 [1.1.3]: https://github.com/wenshi0721/ailink/releases/tag/1.1.3
 [1.1.2]: https://github.com/wenshi0721/ailink/releases/tag/1.1.2

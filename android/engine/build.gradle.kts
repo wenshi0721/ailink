@@ -32,4 +32,8 @@ dependencies {
     implementation(libs.androidx.lifecycle.service)
     implementation(libs.androidx.lifecycle.runtime.ktx)
     implementation(libs.kotlinx.coroutines.android)
+    // 读写 NapCat 的 napcat_<uin>.json（反检测开关），只用到 JSON 解析与序列化
+    implementation(libs.kotlinx.serialization.json)
+
+    testImplementation(libs.junit)
 }

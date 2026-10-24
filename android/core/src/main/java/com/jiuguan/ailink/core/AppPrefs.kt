@@ -33,6 +33,67 @@ class AppPrefs(context: Context) {
         _qqUin.value = clean
     }
 
+    private val _qqPasswordSet = MutableStateFlow(
+        sp.getString(KEY_QQ_PASSWORD_MD5, "").orEmpty().isNotBlank()
+    )
+
+    /** 是否已保存 QQ 密码（只暴露布尔值，密码本身不出 core 层）。 */
+    val qqPasswordSet: StateFlow<Boolean> = _qqPasswordSet.asStateFlow()
+
+    /**
+     * 保存 QQ 密码用于"快速登录凭据失效时自动回退"。
+     *
+     * 明文只在此处停留一瞬：立刻算 MD5，再用 Keystore 加密后落盘。
+     * 空串等价于清除。
+     */
+    fun setQqPassword(plain: String) {
+        val trimmed = plain.trim()
+        if (trimmed.isEmpty()) {
+            clearQqPassword()
+            return
+        }
+        val encrypted = SecretStore.encrypt(md5Hex(trimmed))
+        if (encrypted.isNullOrBlank()) {
+            // 加密不可用（极少数机型的 Keystore 异常）：宁可不存，也不退化成明文
+            clearQqPassword()
+            return
+        }
+        sp.edit().putString(KEY_QQ_PASSWORD_MD5, encrypted).apply()
+        _qqPasswordSet.value = true
+    }
+
+    fun clearQqPassword() {
+        sp.edit().remove(KEY_QQ_PASSWORD_MD5).apply()
+        _qqPasswordSet.value = false
+    }
+
+    /** 取出来注入容器的 `NAPCAT_QUICK_PASSWORD_MD5`；未配置或解不开返回空串。 */
+    fun qqPasswordMd5(): String {
+        val encrypted = sp.getString(KEY_QQ_PASSWORD_MD5, "").orEmpty()
+        if (encrypted.isBlank()) return ""
+        val md5 = SecretStore.decrypt(encrypted).orEmpty()
+        return if (md5.length == 32) md5 else ""
+    }
+
+    private fun md5Hex(text: String): String =
+        java.security.MessageDigest.getInstance("MD5")
+            .digest(text.toByteArray(Charsets.UTF_8))
+            .joinToString("") { "%02x".format(it) }
+
+    private val _antiDetect = MutableStateFlow(sp.getBoolean(KEY_ANTI_DETECT, false))
+
+    /**
+     * 反检测加固是否启用（NapCat `o3HookMode = 0` + `bypass` 六项全开）。
+     *
+     * 默认关闭：这是"用兼容性换稳定性"的取舍，出问题时必须能一键退回默认值。
+     */
+    val antiDetect: StateFlow<Boolean> = _antiDetect.asStateFlow()
+
+    fun setAntiDetect(enabled: Boolean) {
+        sp.edit().putBoolean(KEY_ANTI_DETECT, enabled).apply()
+        _antiDetect.value = enabled
+    }
+
     private val _permissionAsked = MutableStateFlow(sp.getBoolean(KEY_NOTIFY_ASKED, false))
     val notificationAsked: StateFlow<Boolean> = _permissionAsked.asStateFlow()
 
@@ -84,6 +145,12 @@ class AppPrefs(context: Context) {
     private companion object {
         const val KEY_ACTIVE_ACCOUNT = "active_account_id"
         const val KEY_QQ_UIN = "qq_uin"
+
+        /** QQ 密码 MD5 的密文（Keystore AES-GCM），绝不存明文。 */
+        const val KEY_QQ_PASSWORD_MD5 = "qq_password_md5_enc"
+
+        /** 反检测加固开关（写入 NapCat 的 o3HookMode / bypass）。 */
+        const val KEY_ANTI_DETECT = "anti_detect"
         const val KEY_ENGINE_RUNNING = "engine_running"
         const val KEY_NOTIFY_ASKED = "notification_asked"
         const val KEY_UPDATE_MIRROR = "update_mirror_base"

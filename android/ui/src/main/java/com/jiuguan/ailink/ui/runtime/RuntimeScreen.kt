@@ -26,6 +26,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -38,6 +39,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import android.content.ClipData
@@ -54,6 +56,7 @@ import com.jiuguan.ailink.ui.common.TagChip
 import com.jiuguan.ailink.core.AppVersion
 import com.jiuguan.ailink.engine.container.LocalRuntime
 import com.jiuguan.ailink.ui.common.appViewModel
+import com.jiuguan.ailink.ui.common.appSwitchColors
 import com.jiuguan.ailink.ui.theme.DangerRed
 import com.jiuguan.ailink.ui.theme.OnlineGreen
 import com.jiuguan.ailink.ui.theme.WarnAmber
@@ -362,8 +365,6 @@ fun RuntimeScreen(
                     }
                 }
 
-                Spacer(Modifier.height(8.dp))
-
                 Spacer(Modifier.height(10.dp))
                 OutlinedTextField(
                     value = vm.qqUin,
@@ -375,6 +376,79 @@ fun RuntimeScreen(
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth()
                 )
+
+                Spacer(Modifier.height(8.dp))
+                OutlinedTextField(
+                    value = vm.qqPasswordInput,
+                    onValueChange = vm::updateQqPasswordInput,
+                    label = { Text("QQ 密码（可选，用于凭据失效时自动登录）") },
+                    placeholder = {
+                        Text(if (vm.qqPasswordSet) "已保存，重新输入可更换" else "留空则失效后只能扫码")
+                    },
+                    supportingText = {
+                        MutedText("只在本机保存 MD5（Keystore 加密），明文密码不落盘")
+                    },
+                    visualTransformation = PasswordVisualTransformation(),
+                    singleLine = true,
+                    trailingIcon = {
+                        if (vm.qqPasswordInput.isNotBlank()) {
+                            TextButton(onClick = vm::saveQqPassword) { Text("保存") }
+                        } else if (vm.qqPasswordSet) {
+                            TextButton(onClick = vm::clearQqPassword) { Text("清除") }
+                        }
+                    },
+                    modifier = Modifier.fillMaxWidth()
+                )
+                if (vm.passwordNotice.isNotBlank()) {
+                    Spacer(Modifier.height(4.dp))
+                    MutedText(vm.passwordNotice)
+                }
+
+                Spacer(Modifier.height(10.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("反检测加固", style = MaterialTheme.typography.bodyMedium)
+                        MutedText(
+                            "o3HookMode=0、bypass 六项全开。用兼容性换在线稳定性；" +
+                                "切换后会自动重启 QQ，随时可关闭还原（第一次改写会留 .bak 备份）"
+                        )
+                        MutedText(remember(vm.antiDetect) { vm.describeAntiDetect() })
+                    }
+                    Switch(
+                        checked = vm.antiDetect,
+                        onCheckedChange = vm::toggleAntiDetect,
+                        colors = appSwitchColors()
+                    )
+                }
+                if (vm.antiDetectNotice.isNotBlank()) {
+                    Spacer(Modifier.height(4.dp))
+                    MutedText(vm.antiDetectNotice)
+                }
+
+                if (vm.needVerify) {
+                    Spacer(Modifier.height(8.dp))
+                    InfoBanner(
+                        title = "QQ 要求人工验证",
+                        message = "密码登录被要求短信/新设备验证。可以直接扫下方二维码，或在 NapCat 的 WebUi 页面完成验证——" +
+                            "直接打开腾讯的验证链接没用，验证结果传不回 NapCat。验证期间不要重启，重启会让验证会话作废。",
+                        tone = BannerTone.WARNING
+                    )
+                    if (vm.verifyUrl.isNotBlank()) {
+                        Spacer(Modifier.height(4.dp))
+                        TextButton(onClick = {
+                            runCatching {
+                                context.startActivity(
+                                    android.content.Intent(
+                                        android.content.Intent.ACTION_VIEW,
+                                        android.net.Uri.parse(vm.verifyUrl)
+                                    )
+                                )
+                            }
+                        }) {
+                            Text("打开验证页（NapCat WebUi）")
+                        }
+                    }
+                }
 
                 if (vm.loginExpired) {
                     Spacer(Modifier.height(8.dp))

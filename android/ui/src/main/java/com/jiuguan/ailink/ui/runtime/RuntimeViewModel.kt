@@ -63,6 +63,14 @@ class RuntimeViewModel(private val container: AppContainer) : ViewModel() {
     var loggedIn by mutableStateOf(false)
         private set
 
+    /** QQ 要求人工验证（短信/新设备）：此时只有扫码或在 NapCat WebUi 里完成验证两条路。 */
+    var needVerify by mutableStateOf(false)
+        private set
+
+    /** 可直接打开的 NapCat WebUi 验证页地址（验证必须在这里做，直接开腾讯链接无效）。 */
+    var verifyUrl by mutableStateOf("")
+        private set
+
     var quickLoginFailed by mutableStateOf(false)
         private set
 
@@ -78,8 +86,79 @@ class RuntimeViewModel(private val container: AppContainer) : ViewModel() {
         container.prefs.setQqUin(value)
     }
 
+    /** 密码输入框的内容：只存在于内存，保存后立刻清空。 */
+    var qqPasswordInput by mutableStateOf("")
+        private set
+
+    /** 是否已保存密码（界面上只显示这个布尔值，不回显密码）。 */
+    var qqPasswordSet by mutableStateOf(container.prefs.qqPasswordSet.value)
+        private set
+
+    /** 密码相关的即时提示（保存成功/清除/Keystore 不可用）。 */
+    var passwordNotice by mutableStateOf("")
+        private set
+
+    fun updateQqPasswordInput(value: String) {
+        qqPasswordInput = value
+    }
+
+    fun saveQqPassword() {
+        if (qqPasswordInput.isBlank()) return
+        container.prefs.setQqPassword(qqPasswordInput)
+        qqPasswordInput = ""
+        qqPasswordSet = container.prefs.qqPasswordSet.value
+        passwordNotice = if (qqPasswordSet) {
+            "已保存，凭据失效时将自动登录"
+        } else {
+            "保存失败：本机 Keystore 不可用"
+        }
+    }
+
+    fun clearQqPassword() {
+        container.prefs.clearQqPassword()
+        qqPasswordSet = false
+        qqPasswordInput = ""
+        passwordNotice = "已清除，此后凭据失效只能扫码"
+    }
+
     private var qqProcess: Process? = null
     private var qrJob: Job? = null
+
+    /** 反检测加固开关（写 NapCat 配置 + 重启 QQ 生效，可一键还原）。 */
+    var antiDetect by mutableStateOf(container.prefs.antiDetect.value)
+        private set
+
+    /** 开关操作的即时反馈：成功会带上当前配置摘要。 */
+    var antiDetectNotice by mutableStateOf("")
+        private set
+
+    fun toggleAntiDetect(enabled: Boolean) {
+        val uin = container.prefs.qqUin.value
+        val result = com.jiuguan.ailink.engine.container.NapcatConfig
+            .setHardened(runtime.runtimeDir, uin, enabled)
+        result.fold(
+            onSuccess = { state ->
+                container.prefs.setAntiDetect(enabled)
+                antiDetect = enabled
+                antiDetectNotice =
+                    "已${if (enabled) "开启" else "还原"}：${state.summary}；正在重启 QQ 使其生效"
+                // 服务在跑才重启；没在跑就等用户自己点启动
+                QqBridgeService.restart(container.appContext)
+            },
+            onFailure = { error ->
+                // 写失败不改变开关状态，避免"界面说开了、实际没写进去"
+                antiDetectNotice = "写入失败：${error.message ?: "未知错误"}"
+            }
+        )
+    }
+
+    /** 读取当前 NapCat 配置，用于在界面上显示真实状态（而不是只信偏好里的布尔值）。 */
+    fun describeAntiDetect(): String {
+        val state = com.jiuguan.ailink.engine.container.NapcatConfig
+            .read(runtime.runtimeDir, container.prefs.qqUin.value)
+            ?: return "未找到 NapCat 配置（需先安装运行时并登录一次）"
+        return state.summary
+    }
 
     fun refresh() {
         val previous = report
@@ -161,6 +240,12 @@ class RuntimeViewModel(private val container: AppContainer) : ViewModel() {
         }
         viewModelScope.launch {
             QqBridgeService.loggedIn.collect { loggedIn = it }
+        }
+        viewModelScope.launch {
+            QqBridgeService.needVerify.collect { needVerify = it }
+        }
+        viewModelScope.launch {
+            QqBridgeService.verifyUrl.collect { verifyUrl = it }
         }
         viewModelScope.launch {
             QqBridgeService.quickLoginFailed.collect { quickLoginFailed = it }

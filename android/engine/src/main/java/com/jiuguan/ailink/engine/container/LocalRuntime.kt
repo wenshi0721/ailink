@@ -271,7 +271,11 @@ class LocalRuntime(private val context: Context) {
 
     // ---------------- QQ 运行时（容器内安装与启动） ----------------
 
-    private fun newProotProcess(rootfs: File, inner: List<String>): Process {
+    private fun newProotProcess(
+        rootfs: File,
+        inner: List<String>,
+        extraEnv: Map<String, String> = emptyMap()
+    ): Process {
         val proot = binary("libproot.so") ?: error("缺少 libproot.so")
         val loader = binary("libproot-loader.so") ?: error("缺少 libproot-loader.so")
         val tmpDir = File(runtimeDir, "tmp").apply { mkdirs() }
@@ -322,6 +326,8 @@ class LocalRuntime(private val context: Context) {
                 environment()["TMP"] = "/tmp"
                 environment()["TEMP"] = "/tmp"
                 environment()["DEBIAN_FRONTEND"] = "noninteractive"
+                // 额外注入的环境变量（目前只有密码回退用的 MD5）。注意：日志里绝不能回显。
+                extraEnv.forEach { (k, v) -> environment()[k] = v }
             }
             .start()
     }
@@ -426,18 +432,96 @@ class LocalRuntime(private val context: Context) {
      *
      * [uin] 非空时带 `-q <uin>` 走快速登录：QQ 会用上次登录留下的本地凭据，
      * 免扫码。首次登录没有凭据，仍需扫码。
+     *
+     * [passwordMd5] 非空时注入 `NAPCAT_QUICK_PASSWORD_MD5`，让 NapCat 在
+     * `-q` 凭据失效（"你的用户身份已失效"）后自动回退密码登录，无需人工扫码。
+     * 传的是 32 位小写 MD5，明文密码不经过这里。
      */
-    fun launchQq(uin: String = ""): Process {
+    fun launchQq(uin: String = "", passwordMd5: String = ""): Process {
         val rootfs = File(runtimeDir, "rootfs")
         check(File(rootfs, "opt/QQ/qq").exists()) { "QQ 未安装" }
         val quick = if (uin.isBlank()) "" else " -q $uin"
+        // 只有同时有号码和密码时才有意义：密码回退是在 -q 失败之后触发的
+        val env = if (uin.isNotBlank() && passwordMd5.length == 32) {
+            mapOf("NAPCAT_QUICK_PASSWORD_MD5" to passwordMd5.lowercase())
+        } else {
+            emptyMap()
+        }
         return newProotProcess(
             rootfs,
             listOf(
                 "/bin/bash", "-lc",
                 "cd /opt/QQ && exec xvfb-run -a /opt/QQ/qq --no-sandbox$quick"
-            )
+            ),
+            env
         )
+    }
+
+    /**
+     * 结束上一个 QQ 容器进程，并**等它真的退出**。
+     *
+     * 为什么必须等：`destroy()` 只是发 SIGTERM，旧进程里的 Xvfb 和 QQ 还没死透时
+     * 新实例就起来了，两个实例会抢同一个 X display 和 rootfs 里的锁文件，
+     * 新实例表现为"一行日志都不打印"（实测出现过 5 小时空窗）。
+     *
+     * @return true 表示已退出（含被强制杀死）；false 表示仍然存活。
+     */
+    fun terminate(process: Process?, graceMs: Long = 8_000L): Boolean {
+        if (process == null) return true
+        runCatching { process.destroy() }
+        if (awaitExit(process, graceMs)) {
+            return true
+        }
+        // 8 秒还没退，说明卡死在容器里，强杀并再等 2 秒。
+        // destroyForcibly 是 API 26 才有的：低版本退化为再发一次 SIGTERM，
+        // 宁可多等一轮也不能让 NoSuchMethodError 把整个终止流程吞掉。
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+            runCatching { process.destroyForcibly() }
+        } else {
+            runCatching { process.destroy() }
+        }
+        return awaitExit(process, 2_000L)
+    }
+
+    /**
+     * 等待进程退出（带超时）。
+     *
+     * 不用 `Process.waitFor(timeout, unit)`：那是 API 26 方法，低版本直接抛异常。
+     * 这里用 `exitValue()` 轮询——运行中会抛 IllegalThreadStateException，
+     * 抛了就说明还活着，语义等价且全版本可用。
+     */
+    private fun awaitExit(process: Process, timeoutMs: Long): Boolean {
+        val deadline = System.currentTimeMillis() + timeoutMs
+        while (System.currentTimeMillis() < deadline) {
+            if (hasExited(process)) return true
+            runCatching { Thread.sleep(50) }
+        }
+        return hasExited(process)
+    }
+
+    private fun hasExited(process: Process): Boolean =
+        runCatching { process.exitValue() }.isSuccess
+
+    /**
+     * 清理容器内残留的 X 锁。
+     *
+     * `xvfb-run -a` 会避开仍被占用的 display 编号，但被 SIGKILL 的旧 Xvfb 会留下
+     * `/tmp/.X<n>-lock` 与 `/tmp/.X11-unix/X<n>`，新实例可能一直等锁。
+     * 调用时机必须是"上一个进程已确认退出"之后。
+     */
+    fun cleanupStaleX11() {
+        val tmp = File(runtimeDir, "rootfs/tmp")
+        if (!tmp.isDirectory) return
+        runCatching {
+            tmp.listFiles()?.forEach { file ->
+                val name = file.name
+                if (name.startsWith(".X11-unix")) {
+                    file.deleteRecursively()
+                } else if (name.startsWith(".X") && name.endsWith("-lock")) {
+                    file.delete()
+                }
+            }
+        }
     }
 
     /** 读取容器内的安装日志（失败时用于诊断）。 */
