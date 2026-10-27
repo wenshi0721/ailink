@@ -58,6 +58,9 @@ fun SettingsScreen(
     val updateMirror by vm.updateMirror.collectAsStateWithLifecycle()
 
     val context = LocalContext.current
+    val enabledAccounts = accounts.count { it.enabled }
+    val usableAi = profiles.any { !it.isLocalOnly && it.enabled && !it.needsReview }
+
     var confirmClear by remember { mutableStateOf(false) }
     var showAbout by remember { mutableStateOf(false) }
     var showMirror by remember { mutableStateOf(false) }
@@ -81,7 +84,13 @@ fun SettingsScreen(
                 Column(modifier = Modifier.weight(1f)) {
                     Text("接入服务", style = MaterialTheme.typography.titleMedium)
                     Spacer(Modifier.height(3.dp))
-                    MutedText(if (running) "前台服务运行中，退出应用仍保持在线" else "已停止，账号不会收发消息")
+                    MutedText(
+                        when {
+                            !running -> "已停止，账号不会收发消息"
+                            enabledAccounts == 0 -> "服务已开启，但没有参与接入的账号"
+                            else -> "前台服务运行中，退出应用仍保持在线"
+                        }
+                    )
                 }
                 Switch(
                     checked = running,
@@ -91,13 +100,34 @@ fun SettingsScreen(
             }
         }
 
+        if (running && enabledAccounts == 0) {
+            Spacer(Modifier.height(10.dp))
+            InfoBanner(
+                title = "服务在空转",
+                message = "总开关开着，但没有启用的账号，收不到任何消息。到「账号管理」添加账号或打开账号开关。",
+                tone = BannerTone.WARNING
+            )
+        } else if (!usableAi) {
+            Spacer(Modifier.height(10.dp))
+            InfoBanner(
+                title = "尚未配置可用的 AI 服务",
+                message = "现在会使用内置模拟回复，不会调用真实模型。到「AI 服务」新增一份并测试通过即可。",
+                tone = BannerTone.INFO
+            )
+        }
+
         Spacer(Modifier.height(20.dp))
         SectionHeader("配置")
         Spacer(Modifier.height(8.dp))
         AppCard {
             SettingRow(
                 title = "AI 服务",
-                subtitle = "已配置 ${profiles.size} 个（内置模拟回复始终可用）",
+                subtitle = buildString {
+                    append("${profiles.count { it.enabled }} 个启用 / 共 ${profiles.size} 个")
+                    profiles.firstOrNull { it.isDefault }?.let { append(" · 默认：${it.name}") }
+                    val pending = profiles.count { it.needsReview }
+                    if (pending > 0) append(" · $pending 个旧配置待确认")
+                },
                 onClick = { nav.navigate("ai") },
                 trailing = { Chevron() }
             )
@@ -111,7 +141,7 @@ fun SettingsScreen(
             SoftDivider()
             SettingRow(
                 title = "手机内置运行时（QQ）",
-                subtitle = "不依赖电脑与 Termux，查看执行链路就绪度",
+                subtitle = "安装 / 启动 QQ、扫码登录、查看运行日志",
                 onClick = { nav.navigate("runtime") },
                 trailing = { Chevron() }
             )

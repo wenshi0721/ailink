@@ -47,4 +47,12 @@ object MessageOrigin {
     const val MANUAL = "MANUAL"
     const val SYSTEM = "SYSTEM"
     const val INCOMING = "INCOMING"
+
+    /**
+     * 机器人主动发起的消息（对方没说话，机器人先开口）。
+     *
+     * 单独一个来源而不是复用 [AUTO]：主动发起的每小时/每天配额要从库里数，
+     * 混进被动回复里就分不清"回了多少"与"主动说了多少"。
+     */
+    const val PROACTIVE = "PROACTIVE"
 }

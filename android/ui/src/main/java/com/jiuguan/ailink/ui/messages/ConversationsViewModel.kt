@@ -73,10 +73,16 @@ class ConversationsViewModel(private val container: AppContainer) : ViewModel() 
         _filter.value = value
     }
 
-    /** 空态里的一键复位：清空关键词并回到「全部」。 */
+    /** 空态里的一键复位：清空关键词、类型筛选，并取消首页设置的账号过滤。 */
     fun clearFilters() {
         _query.value = ""
         _filter.value = ConversationFilter.ALL
+        container.prefs.setActiveAccount("")
+    }
+
+    /** 只取消「仅看某个账号」，保留关键词与类型筛选。 */
+    fun clearAccountFilter() {
+        container.prefs.setActiveAccount("")
     }
 
     fun markRead(convId: String) {

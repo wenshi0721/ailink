@@ -31,7 +31,10 @@ fun LabeledField(
     singleLine: Boolean = true,
     minLines: Int = 1,
     keyboardType: KeyboardType = KeyboardType.Text,
-    enabled: Boolean = true
+    enabled: Boolean = true,
+    visualTransformation: androidx.compose.ui.text.input.VisualTransformation =
+        androidx.compose.ui.text.input.VisualTransformation.None,
+    trailingIcon: (@Composable () -> Unit)? = null
 ) {
     Column(modifier = modifier.fillMaxWidth()) {
         Text(
@@ -56,6 +59,8 @@ fun LabeledField(
             singleLine = singleLine,
             minLines = minLines,
             enabled = enabled,
+            visualTransformation = visualTransformation,
+            trailingIcon = trailingIcon,
             keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
                 keyboardType = keyboardType
             ),

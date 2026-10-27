@@ -26,7 +26,7 @@ class VisionProbe(
      * 供界面展示与回复链路的快速判断使用。
      */
     fun cached(profile: AiProfileEntity): VisionSupport {
-        if (!profile.visionEnabled) return VisionSupport.UNSUPPORTED
+        if (!profile.visionEnabled || !profile.enabled || profile.needsReview) return VisionSupport.UNSUPPORTED
         return readCache(profile)
             ?: VisionCatalog.quickJudge(profile.model)
             ?: VisionSupport.UNKNOWN
@@ -51,7 +51,9 @@ class VisionProbe(
      *              这是用户纠正误判的唯一手段，必须真的发请求。
      */
     suspend fun detect(profile: AiProfileEntity, force: Boolean = false): VisionSupport {
-        if (!profile.visionEnabled) return VisionSupport.UNSUPPORTED
+        if (!profile.visionEnabled || !profile.enabled || profile.needsReview) {
+            return VisionSupport.UNSUPPORTED
+        }
         if (profile.isLocalOnly || profile.baseUrl.isBlank()) return VisionSupport.UNSUPPORTED
 
         if (!force) {

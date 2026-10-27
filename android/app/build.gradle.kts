@@ -53,7 +53,7 @@ val signingProps = Properties().apply {
  * 调试包如果和正式版同号，遇到手机上装的是更高号（例如从别处装的构建）就会被
  * INSTALL_FAILED_VERSION_DOWNGRADE 挡下。抬高 1 之后，任何 1.1.4 正式版都能被直接覆盖。
  */
-val BASE_VERSION_CODE = 25
+val BASE_VERSION_CODE = 26
 
 android {
     namespace = "com.jiuguan.ailink"
@@ -64,7 +64,7 @@ android {
         minSdk = 24
         targetSdk = 34
         versionCode = BASE_VERSION_CODE
-        versionName = "1.1.5"
+        versionName = "1.1.6"
     }
 
     // 正式签名：见文件顶部 signingProps 的说明

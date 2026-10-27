@@ -2,6 +2,7 @@ package com.jiuguan.ailink.core
 
 import android.content.Context
 import android.content.SharedPreferences
+import com.jiuguan.ailink.core.reply.BehaviorConfig
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -94,6 +95,21 @@ class AppPrefs(context: Context) {
         _antiDetect.value = enabled
     }
 
+    /**
+     * "QQ 要求人工验证"状态的截止时间戳。
+     *
+     * 必须落盘：这个标志决定下一次启动是否带 `-q`。放在内存里时，只要前台服务被
+     * 重建一次就会丢，随后又带 `-q` 重试密码登录 → 再次要求验证码 → 再次重启，
+     * 形成十几秒一轮的死循环，二维码永远生成不出来（实测踩到）。
+     */
+    fun captchaUntil(): Long = sp.getLong(KEY_CAPTCHA_UNTIL, 0L)
+
+    fun setCaptchaUntil(timestamp: Long) {
+        sp.edit().putLong(KEY_CAPTCHA_UNTIL, timestamp).apply()
+    }
+
+    fun clearCaptchaUntil() = setCaptchaUntil(0L)
+
     private val _permissionAsked = MutableStateFlow(sp.getBoolean(KEY_NOTIFY_ASKED, false))
     val notificationAsked: StateFlow<Boolean> = _permissionAsked.asStateFlow()
 
@@ -142,6 +158,49 @@ class AppPrefs(context: Context) {
         }
     }
 
+    /**
+     * 接入配置最近一次「测试连接」的结论，按账号 id 存一行
+     * `ok|timestamp|message`。
+     *
+     * 放偏好而不是数据库：这是可丢弃的运行期推断结果，账号配置一改就应作废，
+     * 不值得为它加表字段。界面据此展示「已保存未测试 / 测试成功 / 测试失败」。
+     */
+    fun bridgeTest(accountId: String): String =
+        sp.getString(KEY_BRIDGE_TEST + accountId, "").orEmpty()
+
+    fun setBridgeTest(accountId: String, ok: Boolean, message: String) {
+        if (accountId.isBlank()) return
+        val safe = message.replace("|", "/").replace("\n", " ").take(160)
+        sp.edit().putString(KEY_BRIDGE_TEST + accountId, "${if (ok) 1 else 0}|${System.currentTimeMillis()}|$safe").apply()
+    }
+
+    fun clearBridgeTest(accountId: String) {
+        if (accountId.isBlank()) return
+        sp.edit().remove(KEY_BRIDGE_TEST + accountId).apply()
+    }
+
+    /**
+     * 账号级「回复行为」配置（多段 / 主动发起 / 限流），整段 JSON 存一个键。
+     *
+     * 放偏好而不是 accounts 表：这些参数还会继续长，加列就要写迁移；
+     * 而项目对数据库开了 `fallbackToDestructiveMigration`，升版本后回滚旧 APK 会清空聊天记录。
+     * 存在偏好里，回滚只需换安装包，一条消息都不会丢。
+     */
+    fun behavior(accountId: String): BehaviorConfig =
+        BehaviorConfig.decode(sp.getString(KEY_BEHAVIOR + accountId, "").orEmpty())
+
+    fun setBehavior(accountId: String, config: BehaviorConfig) {
+        if (accountId.isBlank()) return
+        sp.edit()
+            .putString(KEY_BEHAVIOR + accountId, BehaviorConfig.encode(config))
+            .apply()
+    }
+
+    fun clearBehavior(accountId: String) {
+        if (accountId.isBlank()) return
+        sp.edit().remove(KEY_BEHAVIOR + accountId).apply()
+    }
+
     private companion object {
         const val KEY_ACTIVE_ACCOUNT = "active_account_id"
         const val KEY_QQ_UIN = "qq_uin"
@@ -151,10 +210,19 @@ class AppPrefs(context: Context) {
 
         /** 反检测加固开关（写入 NapCat 的 o3HookMode / bypass）。 */
         const val KEY_ANTI_DETECT = "anti_detect"
+
+        /** 「QQ 要求人工验证」的截止时间戳（毫秒），跨进程重启保持。 */
+        const val KEY_CAPTCHA_UNTIL = "qq_captcha_until"
         const val KEY_ENGINE_RUNNING = "engine_running"
         const val KEY_NOTIFY_ASKED = "notification_asked"
         const val KEY_UPDATE_MIRROR = "update_mirror_base"
         const val KEY_LAST_UPDATE_CHECK = "last_update_check"
         const val KEY_VISION_CACHE = "vision_cache_"
+
+        /** 接入配置测试结论前缀，后接账号 id。 */
+        const val KEY_BRIDGE_TEST = "bridge_test_"
+
+        /** 回复行为配置（BehaviorConfig 的 JSON），后接账号 id。 */
+        const val KEY_BEHAVIOR = "behavior_"
     }
 }

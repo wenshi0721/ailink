@@ -43,12 +43,15 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavController
 import com.jiuguan.ailink.data.local.AccountEntity
+import com.jiuguan.ailink.data.local.AiProfileEntity
 import com.jiuguan.ailink.data.local.ConversationEntity
 import com.jiuguan.ailink.engine.service.RuntimeState
+import com.jiuguan.ailink.model.BridgeType
 import com.jiuguan.ailink.model.ConnStatus
 import com.jiuguan.ailink.model.Platform
 import com.jiuguan.ailink.ui.common.AppCard
 import com.jiuguan.ailink.ui.common.EmptyState
+import com.jiuguan.ailink.ui.common.ErrorGuideCard
 import com.jiuguan.ailink.ui.common.InfoBanner
 import com.jiuguan.ailink.ui.common.MutedText
 import com.jiuguan.ailink.ui.common.PlatformAvatar
@@ -60,8 +63,10 @@ import com.jiuguan.ailink.ui.common.StatusPill
 import com.jiuguan.ailink.ui.common.TagChip
 import com.jiuguan.ailink.ui.common.appSwitchColors
 import com.jiuguan.ailink.ui.common.appViewModel
+import com.jiuguan.ailink.ui.common.guideFor
 import com.jiuguan.ailink.ui.theme.OnlineGreen
 import com.jiuguan.ailink.ui.theme.QqBlue
+import com.jiuguan.ailink.ui.theme.WarnAmber
 import com.jiuguan.ailink.ui.theme.WeChatGreen
 import com.jiuguan.ailink.util.TextUtils
 import com.jiuguan.ailink.util.TimeFmt
@@ -69,12 +74,21 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
+/** 首页「待处理」条目：标题 + 一句做法 + 一个入口。 */
+private data class AttentionItem(
+    val title: String,
+    val detail: String,
+    val action: String,
+    val onAction: () -> Unit
+)
+
 @Composable
 fun HomeScreen(
     nav: NavController,
     vm: HomeViewModel = appViewModel { HomeViewModel(it) }
 ) {
     val accounts by vm.accounts.collectAsStateWithLifecycle()
+    val aiProfiles by vm.aiProfiles.collectAsStateWithLifecycle()
     val states by vm.runtimeStates.collectAsStateWithLifecycle()
     val activeId by vm.activeAccountId.collectAsStateWithLifecycle()
     val running by vm.engineRunning.collectAsStateWithLifecycle()
@@ -89,9 +103,57 @@ fun HomeScreen(
 
     val onlineCount = accounts.count { states[it.id]?.isOnline == true }
     val activeAccount = accounts.firstOrNull { it.id == activeId } ?: accounts.firstOrNull()
-    val hasDemoAccount = accounts.any { it.bridgeType == com.jiuguan.ailink.model.BridgeType.DEMO.name }
+    val hasDemoAccount = accounts.any { it.bridgeType == BridgeType.DEMO.name }
+    val realAccountCount = accounts.count { it.bridgeType != BridgeType.DEMO.name }
+    val enabledAccounts = accounts.filter { it.enabled }
+    val errorAccounts = accounts.filter { states[it.id]?.status == ConnStatus.ERROR }
+    val usableAi = aiProfiles.any { !it.isLocalOnly && it.enabled && !it.needsReview }
+    val testedAi = aiProfiles.any { !it.isLocalOnly && it.enabled && !it.needsReview && it.lastTestOk }
+    val legacyPending = aiProfiles.count { it.needsReview }
+    val currentProfile = activeAccount?.let { account ->
+        aiProfiles.firstOrNull { it.id == account.aiProfileId }
+    } ?: aiProfiles.firstOrNull { it.isDefault && it.enabled && !it.needsReview }
+    val guideDone = realAccountCount > 0 && testedAi && running
     val dateLine = remember {
         SimpleDateFormat("M 月 d 日 · EEEE", Locale.CHINA).format(Date())
+    }
+
+    // 待处理清单：只收「必须用户动手」的问题，按影响面排序
+    val attention = buildList<AttentionItem> {
+        errorAccounts.take(2).forEach { account ->
+            val guide = guideFor(states[account.id]?.lastError.orEmpty())
+            add(
+                AttentionItem(
+                    title = "「${account.displayName.ifBlank { "未命名账号" }}」${guide.title}",
+                    detail = guide.action,
+                    action = "去修复",
+                    onAction = { nav.navigate("account/edit?accountId=${account.id}") }
+                )
+            )
+        }
+        if (legacyPending > 0) {
+            add(
+                AttentionItem(
+                    title = "$legacyPending 个旧版 API 配置待确认",
+                    detail = "升级后已停用，不会自动生效；核对地址与密钥后再启用。",
+                    action = "去确认",
+                    onAction = { nav.navigate("ai") }
+                )
+            )
+        }
+        if (currentProfile != null && !currentProfile.isLocalOnly && currentProfile.enabled &&
+            !currentProfile.needsReview && currentProfile.lastTestAt <= 0L
+        ) {
+            add(
+                AttentionItem(
+                    title = "「${currentProfile.name.ifBlank { "未命名配置" }}」还没测试",
+                    detail = "没验证过的密钥会在收到消息时才报错，建议现在测一次。",
+                    action = "去测试",
+                    onAction = { nav.navigate("ai") }
+                )
+            )
+        }
+        // 「服务未启动」由上方三步引导负责，这里不再重复列出
     }
 
     Column(
@@ -133,6 +195,24 @@ fun HomeScreen(
 
         Spacer(Modifier.height(14.dp))
 
+        if (!guideDone) {
+            SetupGuide(
+                realAccountCount = realAccountCount,
+                aiConfigured = usableAi,
+                aiTested = testedAi,
+                running = running,
+                onAddAccount = { nav.navigate("account/edit") },
+                onOpenAi = { nav.navigate("ai") },
+                onStart = { vm.setEngineRunning(true) }
+            )
+            Spacer(Modifier.height(14.dp))
+        }
+
+        if (attention.isNotEmpty()) {
+            AttentionCard(items = attention)
+            Spacer(Modifier.height(14.dp))
+        }
+
         AppCard {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Column(modifier = Modifier.weight(1f)) {
@@ -146,19 +226,44 @@ fun HomeScreen(
                         )
                         if (running) {
                             Spacer(Modifier.width(8.dp))
-                            TagChip("运行中", OnlineGreen)
+                            TagChip(
+                                text = if (enabledAccounts.isEmpty()) "空转中" else "运行中",
+                                color = if (enabledAccounts.isEmpty()) WarnAmber else OnlineGreen
+                            )
                         }
                     }
                     Spacer(Modifier.height(5.dp))
                     MutedText(
-                        if (running) "账号保持在线，收到的消息将自动回复"
-                        else "服务已停止，账号处于离线状态"
+                        when {
+                            !running -> "服务已停止，账号处于离线状态"
+                            enabledAccounts.isEmpty() -> "服务已开启，但还没有参与接入的账号"
+                            onlineCount == 0 && errorAccounts.isNotEmpty() -> "服务已开启，账号连接失败"
+                            onlineCount == 0 -> "服务已开启，正在连接账号…"
+                            else -> "$onlineCount 个账号在线，收到的消息将自动回复"
+                        }
                     )
                 }
                 Switch(
                     checked = running,
                     onCheckedChange = vm::setEngineRunning,
                     colors = appSwitchColors()
+                )
+            }
+
+            if (running && enabledAccounts.isEmpty()) {
+                Spacer(Modifier.height(10.dp))
+                InfoBanner(
+                    title = "现在收不到任何消息",
+                    message = "总开关已打开，但没有启用的账号。先添加账号，或在账号页把开关打开。",
+                    tone = com.jiuguan.ailink.ui.common.BannerTone.WARNING
+                )
+            } else if (running && onlineCount == 0 && errorAccounts.isNotEmpty()) {
+                val guide = guideFor(states[errorAccounts.first().id]?.lastError.orEmpty())
+                Spacer(Modifier.height(10.dp))
+                InfoBanner(
+                    title = "账号还没连上：${guide.title}",
+                    message = guide.action,
+                    tone = com.jiuguan.ailink.ui.common.BannerTone.DANGER
                 )
             }
 
@@ -198,8 +303,10 @@ fun HomeScreen(
             Spacer(Modifier.height(8.dp))
             ActiveAccountCard(
                 account = activeAccount,
+                aiProfile = currentProfile,
                 state = states[activeAccount.id] ?: RuntimeState(activeAccount.id),
                 onEdit = { nav.navigate("account/edit?accountId=${activeAccount.id}") },
+                onManageAi = { nav.navigate("ai") },
                 onToggleOnline = { online ->
                     vm.setAccountEnabled(activeAccount, online)
                 }
@@ -324,11 +431,22 @@ private fun AccountFilterStrip(
 @Composable
 private fun ActiveAccountCard(
     account: AccountEntity,
+    aiProfile: com.jiuguan.ailink.data.local.AiProfileEntity?,
     state: RuntimeState,
     onEdit: () -> Unit,
+    onManageAi: () -> Unit,
     onToggleOnline: (Boolean) -> Unit
 ) {
     val platformColor = if (account.platformType == Platform.WECHAT) WeChatGreen else QqBlue
+    val aiName = aiProfile?.name?.ifBlank { "未命名配置" } ?: "内置模拟回复"
+    val (aiState, aiStateColor) = when {
+        aiProfile == null || aiProfile.isLocalOnly -> "内置回复" to MaterialTheme.colorScheme.onSurfaceVariant
+        aiProfile.needsReview -> "旧配置待确认" to WarnAmber
+        !aiProfile.enabled -> "已停用" to MaterialTheme.colorScheme.onSurfaceVariant
+        aiProfile.lastTestAt <= 0L -> "未测试" to WarnAmber
+        aiProfile.lastTestOk -> "测试通过" to OnlineGreen
+        else -> "测试失败" to MaterialTheme.colorScheme.error
+    }
 
     AppCard {
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -358,7 +476,7 @@ private fun ActiveAccountCard(
                         when {
                             state.status == ConnStatus.ONLINE && state.connectedAt > 0 ->
                                 "已在线 ${TimeFmt.duration(System.currentTimeMillis() - state.connectedAt)}"
-                            state.lastError.isNotBlank() -> TextUtils.truncate(state.lastError, 18)
+                            state.lastError.isNotBlank() -> guideFor(state.lastError).title
                             else -> account.bridge.shortLabel
                         }
                     )
@@ -385,13 +503,64 @@ private fun ActiveAccountCard(
             MiniMetric("本次收发", "${state.received} / ${state.replied}", Modifier.weight(1f))
         }
 
+        if (state.lastError.isNotBlank() && state.status != ConnStatus.ONLINE) {
+            Spacer(Modifier.height(10.dp))
+            ErrorGuideCard(
+                raw = state.lastError,
+                actionText = "去修复",
+                onAction = onEdit
+            )
+        }
+
+        Spacer(Modifier.height(10.dp))
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                text = "AI 服务",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Spacer(Modifier.width(6.dp))
+            Text(
+                text = aiName,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurface,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f)
+            )
+            if (aiProfile?.isDefault == true) {
+                Spacer(Modifier.width(4.dp))
+                TagChip("默认", MaterialTheme.colorScheme.primary)
+            }
+            Spacer(Modifier.width(6.dp))
+            TagChip(aiState, aiStateColor)
+            TextButton(
+                onClick = onManageAi,
+                contentPadding = androidx.compose.foundation.layout.PaddingValues(0.dp)
+            ) { Text("管理") }
+        }
+
+        // 测试结论带时间才有意义：三天前通过不代表现在还能用
+        if (aiProfile != null && !aiProfile.isLocalOnly && aiProfile.lastTestAt > 0) {
+            MutedText(
+                (if (aiProfile.lastTestOk) "上次测试通过于 " else "上次测试失败于 ") +
+                    TimeFmt.relative(aiProfile.lastTestAt)
+            )
+        }
+
         Spacer(Modifier.height(4.dp))
         Row(verticalAlignment = Alignment.CenterVertically) {
             TextButton(onClick = onEdit, contentPadding = androidx.compose.foundation.layout.PaddingValues(0.dp)) {
                 Text("编辑配置")
             }
             Spacer(Modifier.width(16.dp))
-            MutedText(if (!account.enabled) "该账号未参与接入" else if (state.isOnline) "开关可临时下线该账号" else "服务运行时会自动上线")
+            MutedText(
+                when {
+                    !account.enabled -> "该账号未参与接入"
+                    !state.isOnline -> "服务运行时会自动上线"
+                    else -> "开关可临时下线该账号"
+                }
+            )
         }
     }
 }
@@ -471,6 +640,186 @@ private fun RecentConversationRow(
                     }
                 }
             }
+        }
+    }
+}
+
+/** 首页「待处理」清单：把需要动手的问题集中到一处，避免散落在各页。 */
+@Composable
+private fun AttentionCard(items: List<AttentionItem>) {
+    AppCard {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                text = "待处理",
+                style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.onSurface,
+                modifier = Modifier.weight(1f)
+            )
+            TagChip("${items.size} 项", WarnAmber)
+        }
+        Spacer(Modifier.height(6.dp))
+
+        items.forEachIndexed { index, item ->
+            if (index > 0) {
+                SoftDivider(Modifier.padding(vertical = 8.dp))
+            }
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = item.title,
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                    Spacer(Modifier.height(2.dp))
+                    MutedText(item.detail)
+                }
+                TextButton(onClick = item.onAction) { Text(item.action) }
+            }
+        }
+    }
+}
+
+/**
+ * 首次使用的三步引导。
+ *
+ * 只保留「当前这一步」的操作按钮，已完成与未轮到的步骤弱化展示，
+ * 避免三行都放按钮导致用户不知道先点哪个。
+ */
+@Composable
+private fun SetupGuide(
+    realAccountCount: Int,
+    aiConfigured: Boolean,
+    aiTested: Boolean,
+    running: Boolean,
+    onAddAccount: () -> Unit,
+    onOpenAi: () -> Unit,
+    onStart: () -> Unit
+) {
+    val step1 = realAccountCount > 0
+    val step2 = aiTested
+    val step3 = running
+    val doneCount = listOf(step1, step2, step3).count { it }
+    val current = when {
+        !step1 -> 1
+        !step2 -> 2
+        !step3 -> 3
+        else -> 0
+    }
+
+    AppCard {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                text = "开始使用",
+                style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.onSurface,
+                modifier = Modifier.weight(1f)
+            )
+            TagChip("$doneCount / 3 完成", if (doneCount == 3) OnlineGreen else WarnAmber)
+        }
+        Spacer(Modifier.height(4.dp))
+        MutedText("按顺序完成三步；现在做到第 $current 步。")
+
+        Spacer(Modifier.height(12.dp))
+        GuideStep(
+            index = 1,
+            title = "接入一个账号",
+            detail = if (step1) {
+                "已接入 $realAccountCount 个真实账号"
+            } else {
+                "手机内置 QQ、电脑桥接或微信，任选一种"
+            },
+            done = step1,
+            active = current == 1,
+            actionText = "去添加",
+            onAction = onAddAccount
+        )
+        SoftDivider(Modifier.padding(vertical = 8.dp))
+        GuideStep(
+            index = 2,
+            title = "配置并测试 AI 服务",
+            detail = when {
+                step2 -> "已测试通过，收到消息就能调用模型"
+                aiConfigured -> "已填好地址与密钥，但还没测试通过"
+                else -> "粘贴 API Key 即可，内置主流厂商模板"
+            },
+            done = step2,
+            active = current == 2,
+            actionText = if (aiConfigured) "去测试" else "去配置",
+            onAction = onOpenAi
+        )
+        SoftDivider(Modifier.padding(vertical = 8.dp))
+        GuideStep(
+            index = 3,
+            title = "启动接入服务",
+            detail = if (step3) "服务运行中，退出应用仍保持在线" else "打开后会保持在线并自动回复",
+            done = step3,
+            active = current == 3,
+            actionText = "启动",
+            onAction = onStart
+        )
+    }
+}
+
+@Composable
+private fun GuideStep(
+    index: Int,
+    title: String,
+    detail: String,
+    done: Boolean,
+    active: Boolean,
+    actionText: String,
+    onAction: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(enabled = !done) { onAction() },
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Box(
+            modifier = Modifier
+                .size(24.dp)
+                .background(
+                    when {
+                        done -> OnlineGreen
+                        active -> MaterialTheme.colorScheme.primary
+                        else -> MaterialTheme.colorScheme.surfaceVariant
+                    },
+                    CircleShape
+                ),
+            contentAlignment = Alignment.Center
+        ) {
+            Text(
+                text = if (done) "✓" else index.toString(),
+                style = MaterialTheme.typography.labelMedium,
+                color = if (done || active) androidx.compose.ui.graphics.Color.White
+                else MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+        Spacer(Modifier.width(10.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    text = title,
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = if (done || active) MaterialTheme.colorScheme.onSurface
+                    else MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                if (active) {
+                    Spacer(Modifier.width(6.dp))
+                    TagChip("当前", MaterialTheme.colorScheme.primary)
+                }
+            }
+            MutedText(detail)
+        }
+        if (active) {
+            TextButton(onClick = onAction) { Text(actionText) }
+        } else if (done) {
+            Text(
+                text = "已完成",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
         }
     }
 }

@@ -26,7 +26,9 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Send
 import androidx.compose.material.icons.filled.Warning
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -78,6 +80,7 @@ fun ChatScreen(
 
     val listState = rememberLazyListState()
     var menuOpen by remember { mutableStateOf(false) }
+    var confirmClear by remember { mutableStateOf(false) }
 
     LaunchedEffect(messages.size) {
         if (messages.isNotEmpty()) {
@@ -134,11 +137,29 @@ fun ChatScreen(
                         leadingIcon = { Icon(Icons.Default.Delete, contentDescription = null) },
                         onClick = {
                             menuOpen = false
-                            vm.clearHistory()
+                            confirmClear = true
                         }
                     )
                 }
             }
+        }
+
+        // 清空记录不可恢复，先确认再执行
+        if (confirmClear) {
+            AlertDialog(
+                onDismissRequest = { confirmClear = false },
+                title = { Text("清空聊天记录") },
+                text = { Text("将删除这个会话的全部消息，删除后无法恢复。仅影响本机记录，不影响平台上的聊天。") },
+                confirmButton = {
+                    TextButton(onClick = {
+                        vm.clearHistory()
+                        confirmClear = false
+                    }) { Text("清空", color = DangerRed) }
+                },
+                dismissButton = {
+                    TextButton(onClick = { confirmClear = false }) { Text("取消") }
+                }
+            )
         }
 
         Row(

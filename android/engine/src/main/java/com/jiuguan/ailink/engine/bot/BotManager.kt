@@ -56,6 +56,8 @@ class BotManager(
             aiClient = aiClient,
             visionProbe = visionProbe,
             imagePrep = imagePrep,
+            // 每次启动/重启都重新读一遍：账号页保存后走 restart，配置即刻生效
+            behavior = prefs.behavior(account.id),
             onStateChanged = { state -> publish(state) }
         )
         runtimes[account.id] = runtime

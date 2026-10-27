@@ -26,6 +26,11 @@ class AccountsViewModel(private val container: AppContainer) : ViewModel() {
     val runtimeStates: StateFlow<Map<String, RuntimeState>> = botManager.states
     val activeAccountId: StateFlow<String> = prefs.activeAccountId
 
+    /** 账号卡要显示「这个号用的是哪份 AI、测试过没有」。 */
+    val aiProfiles: StateFlow<List<com.jiuguan.ailink.data.local.AiProfileEntity>> =
+        container.aiRepository.observeProfiles()
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
     fun setEnabled(account: AccountEntity, enabled: Boolean) {
         viewModelScope.launch {
             repository.setEnabled(account.id, enabled)

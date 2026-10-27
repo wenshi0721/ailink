@@ -44,6 +44,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavController
 import com.jiuguan.ailink.core.PairingBus
 import com.jiuguan.ailink.data.local.AccountEntity
+import com.jiuguan.ailink.data.local.AiProfileEntity
 import com.jiuguan.ailink.engine.service.RuntimeState
 import com.jiuguan.ailink.model.BridgeType
 import com.jiuguan.ailink.model.ConnStatus
@@ -51,6 +52,7 @@ import com.jiuguan.ailink.model.PairingParser
 import com.jiuguan.ailink.model.Platform
 import com.jiuguan.ailink.ui.common.AppCard
 import com.jiuguan.ailink.ui.common.EmptyState
+import com.jiuguan.ailink.ui.common.ErrorGuideCard
 import com.jiuguan.ailink.ui.common.MutedText
 import com.jiuguan.ailink.ui.common.PlatformAvatar
 import com.jiuguan.ailink.ui.common.SoftDivider
@@ -71,6 +73,7 @@ fun AccountsScreen(
     val accounts by vm.accounts.collectAsStateWithLifecycle()
     val states by vm.runtimeStates.collectAsStateWithLifecycle()
     val activeId by vm.activeAccountId.collectAsStateWithLifecycle()
+    val aiProfiles by vm.aiProfiles.collectAsStateWithLifecycle()
 
     var pendingDelete by remember { mutableStateOf<AccountEntity?>(null) }
     var showPairDialog by remember { mutableStateOf(false) }
@@ -140,13 +143,17 @@ fun AccountsScreen(
         if (accounts.isEmpty()) {
             EmptyState(
                 title = "还没有账号",
-                description = "添加 QQ 或微信账号，配置 AI 服务后即可自动回复"
+                description = "添加 QQ 或微信账号，配置 AI 服务后即可自动回复",
+                actionText = "新增账号",
+                onAction = { nav.navigate("account/edit") }
             )
         } else {
             accounts.forEach { account ->
                 AccountRowCard(
                     account = account,
                     state = states[account.id] ?: RuntimeState(account.id),
+                    aiProfile = aiProfiles.firstOrNull { it.id == account.aiProfileId }
+                        ?: aiProfiles.firstOrNull { it.isDefault },
                     isActive = activeId == account.id,
                     onEdit = { nav.navigate("account/edit?accountId=${account.id}") },
                     onSetActive = { vm.setActive(account.id) },
@@ -219,14 +226,23 @@ fun AccountsScreen(
             onDismissRequest = { pendingDelete = null },
             title = { Text("删除账号") },
             text = {
-                Text("将删除「${account.displayName.ifBlank { "未命名账号" }}」及其全部消息记录，此操作不可恢复。")
+                Text(
+                    "将删除「${account.displayName.ifBlank { "未命名账号" }}」及其全部消息记录，" +
+                        "删除后无法恢复。\n\n只想暂时不接入的话，用「改为停用」即可保留配置与记录。"
+                )
             },
             confirmButton = {
-                TextButton(onClick = {
-                    vm.delete(account)
-                    pendingDelete = null
-                }) {
-                    Text("删除", color = MaterialTheme.colorScheme.error)
+                Row {
+                    TextButton(onClick = {
+                        vm.setEnabled(account, false)
+                        pendingDelete = null
+                    }) { Text("改为停用") }
+                    TextButton(onClick = {
+                        vm.delete(account)
+                        pendingDelete = null
+                    }) {
+                        Text("删除", color = MaterialTheme.colorScheme.error)
+                    }
                 }
             },
             dismissButton = {
@@ -240,6 +256,7 @@ fun AccountsScreen(
 private fun AccountRowCard(
     account: AccountEntity,
     state: RuntimeState,
+    aiProfile: AiProfileEntity?,
     isActive: Boolean,
     onEdit: () -> Unit,
     onSetActive: () -> Unit,
@@ -338,7 +355,7 @@ private fun AccountRowCard(
                 MutedText(
                     when {
                         state.status == ConnStatus.ERROR && state.lastError.isNotBlank() ->
-                            "异常：${TextUtils.truncate(state.lastError, 24)}"
+                            "异常：${com.jiuguan.ailink.ui.common.guideFor(state.lastError).title}"
                         state.status == ConnStatus.CONNECTING -> "正在重连，连接恢复后自动继续"
                         state.lastActiveAt > 0 -> "最近活动 ${TimeFmt.relative(state.lastActiveAt)}"
                         account.autoReply -> "自动回复已开启"
@@ -350,6 +367,52 @@ private fun AccountRowCard(
                 checked = account.enabled,
                 onCheckedChange = onToggle,
                 colors = appSwitchColors()
+            )
+        }
+
+        // 状态之外还要说清「这个号用哪份 AI、测过没有」
+        Spacer(Modifier.height(8.dp))
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                text = "AI",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Spacer(Modifier.width(6.dp))
+            Text(
+                text = aiProfile?.name?.ifBlank { "未命名配置" } ?: "内置模拟回复",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurface,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f)
+            )
+            val aiTag = when {
+                aiProfile == null -> "未绑定"
+                aiProfile.needsReview -> "待确认"
+                !aiProfile.enabled -> "已停用"
+                aiProfile.isLocalOnly -> "本地回复"
+                aiProfile.lastTestAt <= 0L -> "未测试"
+                aiProfile.lastTestOk -> "测试通过"
+                else -> "测试失败"
+            }
+            TagChip(
+                text = aiTag,
+                color = when (aiTag) {
+                    "测试通过" -> com.jiuguan.ailink.ui.theme.OnlineGreen
+                    "测试失败", "待确认" -> com.jiuguan.ailink.ui.theme.DangerRed
+                    "未测试", "未绑定" -> com.jiuguan.ailink.ui.theme.WarnAmber
+                    else -> com.jiuguan.ailink.ui.theme.MutedGray
+                }
+            )
+        }
+
+        if (state.status == ConnStatus.ERROR && state.lastError.isNotBlank()) {
+            Spacer(Modifier.height(10.dp))
+            ErrorGuideCard(
+                raw = state.lastError,
+                actionText = "去修复",
+                onAction = onEdit
             )
         }
     }

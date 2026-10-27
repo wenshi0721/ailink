@@ -56,6 +56,9 @@ class QqBridgeService : Service() {
         /** 降级为扫码模式的保持时长（借鉴 XiaoYou：6 小时后自动回到快速登录）。 */
         private const val CAPTCHA_QR_MODE_MS = 6 * 60 * 60_000L
 
+        /** 这个窗口内再次命中"需要验证码"，判定为切换未生效的死循环。 */
+        private const val CAPTCHA_LOOP_GUARD_MS = 120_000L
+
         /** 两次启动之间的最小间隔，避免自愈/手动连点把刚出的二维码作废。 */
         private const val LAUNCH_COOLDOWN_MS = 15_000L
 
@@ -175,15 +178,17 @@ class QqBridgeService : Service() {
     private var lastKickAt = 0L
 
     /**
-     * QQ 要求人工验证的截止时间（毫秒时间戳）。
+     * QQ 要求人工验证（短信/新设备）的判定。
      *
-     * 之前用的是布尔量，只在登录成功时清除——如果用户一直没能登录，就会永久停在扫码模式，
-     * 想改回快速登录也没机会。改成时间戳后 6 小时自动失效（借鉴 XiaoYou 的做法）。
+     * 时间戳落在 [AppPrefs] 里而不是内存：服务被重建后还要靠它决定"这次启动别带 -q"，
+     * 放内存会丢，直接导致验证码死循环（见 10-25 那次日志）。
      */
-    @Volatile
-    private var captchaUntil = 0L
+    private fun captchaActive(): Boolean =
+        AppPrefs(applicationContext).captchaUntil() > System.currentTimeMillis()
 
-    private fun captchaActive(): Boolean = captchaUntil > System.currentTimeMillis()
+    /** 上一次处理"验证码"事件的时间，用于识别"切了二维码模式仍被要求验证"的循环。 */
+    @Volatile
+    private var lastCaptchaHandledAt = 0L
 
     /** 上次启动时间：用于启动冷却，避免连点/自愈抖动把刚出的二维码作废。 */
     @Volatile
@@ -258,12 +263,13 @@ class QqBridgeService : Service() {
      * 只写一份，避免两处漂移——之前正是 relaunch 少了这些，才出现"起了但没输出、
      * 也没人发现"的空窗。
      */
-    private fun launchAndWatch(runtime: LocalRuntime, uin: String) {
+    private fun launchAndWatch(runtime: LocalRuntime, uin: String, qrMode: Boolean = false) {
         lastLaunchAt = System.currentTimeMillis()
 
         // QQ 要求人工验证期间强制走二维码模式：带 -q 只会再触发一次"需要验证码"，
         // 而 NapCat 在验证码分支里不会生成二维码，界面就一直没有码可扫。
-        val verifyMode = captchaActive()
+        // qrMode 由调用方显式传入，避免"状态读不到就退回带 -q"。
+        val verifyMode = qrMode || captchaActive()
         val effectiveUin = if (verifyMode) "" else uin
         val passwordMd5 = if (effectiveUin.isBlank()) {
             ""
@@ -334,7 +340,7 @@ class QqBridgeService : Service() {
             }
             silentRetries += 1
             appendLog("[app] 清理残留后重试启动（第 $silentRetries 次）")
-            relaunch()
+            relaunch(qrMode = captchaActive())
         }
     }
 
@@ -429,11 +435,15 @@ class QqBridgeService : Service() {
             lastRelaunchAt = now
             offlineSince = now
             appendLog(
-                "[app] 离线超过 ${window / 1000} 秒，第 $relaunchCount 次重启 QQ 容器" +
-                    if (backoff > 0) "（仍离线则按 ${backoff / 60_000} 分钟阶梯重试）" else ""
+                if (window == 0L) {
+                    "[app] 立即重启 QQ 容器（第 $relaunchCount 次）"
+                } else {
+                    "[app] 离线超过 ${window / 1000} 秒，第 $relaunchCount 次重启 QQ 容器"
+                } + if (backoff > 0) "（仍离线则按 ${backoff / 60_000} 分钟阶梯重试）" else ""
             )
             updateNotification("正在重启 QQ…")
-            relaunch()
+            // 验证码模式下必须显式带上 qrMode，避免状态丢失后又退回带 -q 的死循环
+            relaunch(qrMode = captchaActive())
         }
     }
 
@@ -469,17 +479,18 @@ class QqBridgeService : Service() {
     }
 
     private suspend fun probeOneBotPort(): Boolean =
-        kotlinx.coroutines.withContext(Dispatchers.IO) {
-            runCatching {
-                java.net.Socket().use { socket ->
-                    socket.connect(java.net.InetSocketAddress("127.0.0.1", 3001), 1_000)
-                }
-                true
-            }.getOrDefault(false)
+        kotlinx.coroutines.withContext(Dispatchers.IO) { probePort(3001) }
+
+    /** 阻塞式端口探测（调用方必须在 IO 线程）：本地回环，超时给足 800ms 即可。 */
+    private fun probePort(port: Int): Boolean = runCatching {
+        java.net.Socket().use { socket ->
+            socket.connect(java.net.InetSocketAddress("127.0.0.1", port), 800)
         }
+        true
+    }.getOrDefault(false)
 
     /** 重启容器内的 QQ 进程（复用当前配置，含 -q 快速登录）。 */
-    private fun relaunch(force: Boolean = false) {
+    private fun relaunch(force: Boolean = false, qrMode: Boolean = false) {
         // 启动冷却：自愈循环与看门狗可能在同一秒内各自触发一次，
         // 第二次重启会把刚生成、还没被扫的二维码当场作废。
         // force = 用户在界面上明确改过配置，立即生效优先于冷却。
@@ -511,8 +522,11 @@ class QqBridgeService : Service() {
         // 拒绝推送新二维码，用户就再也扫不到码了
         _loggedIn.value = false
         val uin = AppPrefs(applicationContext).qqUin.value
-        appendLog("[app] 重启 QQ 容器（第 $relaunchCount 次）")
-        launchAndWatch(runtime, uin)
+        appendLog(
+            "[app] 重启 QQ 容器（第 $relaunchCount 次）" +
+                if (qrMode) "，本次为二维码模式（不带 -q）" else ""
+        )
+        launchAndWatch(runtime, uin, qrMode = qrMode)
     }
 
     /**
@@ -540,7 +554,8 @@ class QqBridgeService : Service() {
             forceRelaunch = false
             protocolDeadSince = 0L
             // 登录成功 = 人工验证已通过，恢复"带 -q 快速登录"的正常模式
-            captchaUntil = 0L
+            AppPrefs(applicationContext).clearCaptchaUntil()
+            lastCaptchaHandledAt = 0L
             _needVerify.value = false
             _verifyUrl.value = ""
             // 登录成功 = 用户已介入（多半刚扫码），把"被踢后暂停自愈"的状态还回去
@@ -580,10 +595,18 @@ class QqBridgeService : Service() {
         }
         // NapCat 的 WebUi 地址：短信验证必须在 WebUi 页面里完成，
         // 直接打开腾讯的 ti.qq.com 链接，验证结果传不回 NapCat（社区踩坑结论）。
-        if (line.contains("WebUi Token:")) {
+        // 优先用 NapCat 自己打印的 User Panel Url（形如 /webui?token=…），
+        // 不要拼 /webui/web_login —— 那是带账号密码表单的登录页，点进去只会"登录失败"。
+        if (line.contains("WebUi User Panel Url:")) {
+            val url = line.substringAfter("WebUi User Panel Url:").trim()
+            if (url.startsWith("http") && !url.contains("[::]")) {
+                _verifyUrl.value = url
+            }
+        }
+        if (line.contains("WebUi Token:") && _verifyUrl.value.isBlank()) {
             val token = line.substringAfter("WebUi Token:").trim()
             if (token.isNotBlank()) {
-                _verifyUrl.value = "http://127.0.0.1:6099/webui/web_login?token=$token"
+                _verifyUrl.value = "http://127.0.0.1:6099/webui?token=$token"
             }
         }
         // QQ 要求短信/新设备验证：把腾讯原始链接也记下来，只作参考
@@ -597,23 +620,40 @@ class QqBridgeService : Service() {
         // （它不是失败也不是"未尝试"，调用方的 `!success && !attempted` 条件不成立），
         // 所以必须由我们改成二维码模式重启，否则界面会一直没有码。
         if (line.contains("密码回退需要验证码") || line.contains("密码回退需要新设备验证")) {
-            // 6 小时后自动失效，避免永久停在扫码模式（借鉴 XiaoYou 的降级标记 TTL）
-            captchaUntil = System.currentTimeMillis() + CAPTCHA_QR_MODE_MS
+            val now = System.currentTimeMillis()
+            // 落盘：6 小时后自动失效（借鉴 XiaoYou 的降级标记 TTL），且跨服务重建保持
+            AppPrefs(applicationContext).setCaptchaUntil(now + CAPTCHA_QR_MODE_MS)
             _needVerify.value = true
             _loggedIn.value = false
+            _loginExpired.value = true
+
+            val looped = lastCaptchaHandledAt > 0 && now - lastCaptchaHandledAt < CAPTCHA_LOOP_GUARD_MS
+            lastCaptchaHandledAt = now
+            if (looped) {
+                // 已经切到二维码模式还被要求验证：说明本轮改动没生效，再重启只会原地打转
+                autoRestartSuppressed = true
+                suppressedLogged = false
+                appendLog(
+                    "[app] 检测到验证码循环（已切二维码模式仍被要求验证），停止自动重启；" +
+                        "请手动扫码，或在设置里清空 QQ 密码强制走扫码"
+                )
+                updateNotification("需要人工处理：验证码循环，请扫码")
+                return
+            }
+
             _offline.value = true
             autoRestartSuppressed = false
             forceRelaunch = true
-            _loginExpired.value = true
+            val webuiReachable = probePort(6099)
             appendLog(
-                "[app] 密码回退被 QQ 要求人工验证；改为二维码登录（6 小时内保持扫码模式）。" +
+                "[app] 密码回退被 QQ 要求人工验证；改为二维码登录（6 小时内保持扫码模式）" +
                     if (_verifyUrl.value.isNotBlank()) {
-                        "也可打开 WebUi 完成验证：${_verifyUrl.value}"
+                        "。WebUI ${if (webuiReachable) "可达" else "不可达"}：${_verifyUrl.value}"
                     } else {
-                        "如需短信验证，请在 NapCat WebUi 中完成"
+                        "。WebUI 地址未获取到，只能扫码"
                     }
             )
-            updateNotification("需要人工验证：请扫码，或在 WebUi 完成短信验证")
+            updateNotification("需要人工验证：请扫码，或在 WebUI 完成短信验证")
         }
         // 服务端主动踢下线：这不是网络抖动。用失效凭据反复重登只会更快触发风控，
         // 直接停下来等人工扫码，恢复后再交还自动自愈。

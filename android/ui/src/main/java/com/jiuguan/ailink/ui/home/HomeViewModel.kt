@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.jiuguan.ailink.assembly.AppContainer
 import com.jiuguan.ailink.data.local.AccountEntity
+import com.jiuguan.ailink.data.local.AiProfileEntity
 import com.jiuguan.ailink.data.local.ConversationEntity
 import com.jiuguan.ailink.engine.service.RuntimeState
 import com.jiuguan.ailink.model.Direction
@@ -26,6 +27,10 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
     val recentConversations: StateFlow<List<ConversationEntity>> =
         messageRepository.observeConversations()
             .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    /** 首页要展示「当前用的是哪份 API、有没有测试通过」，因此订阅配置列表。 */
+    val aiProfiles: StateFlow<List<AiProfileEntity>> = container.aiRepository.observeProfiles()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     val runtimeStates: StateFlow<Map<String, RuntimeState>> = botManager.states
 

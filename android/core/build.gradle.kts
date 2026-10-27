@@ -1,6 +1,8 @@
 plugins {
     alias(libs.plugins.android.library)
     alias(libs.plugins.kotlin.android)
+    // 回复行为配置（BehaviorConfig）以 JSON 存在偏好里，需要序列化
+    alias(libs.plugins.kotlin.serialization)
 }
 
 // :core —— 最底层模块，只放被所有层共用的模型、偏好、日志、工具。
@@ -26,6 +28,8 @@ android {
 dependencies {
     // AppPrefs / SessionLog / PairingBus 用 StateFlow + SharedFlow
     implementation(libs.kotlinx.coroutines.android)
+    // BehaviorConfig 的 @Serializable
+    implementation(libs.kotlinx.serialization.json)
 
     testImplementation(libs.junit)
 }

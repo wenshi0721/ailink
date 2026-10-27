@@ -80,7 +80,8 @@
 | `engine/service/KeepAlive.kt` | WakeLock + WifiLock | 息屏断连的根因 |
 | `engine/service/BootReceiver.kt` | 开机自启（仅当用户开启过服务） | 高版本需前台服务启动豁免 |
 | `engine/service/BotService.kt` | 账号引擎常驻前台服务 | 通过 `BotHost` 取 BotManager |
-| `engine/bot/BotManager.kt` / `AccountRuntime.kt` | 账号运行时编排、收消息与回复 | 单账号串行（Mutex） |
+| `engine/bot/BotManager.kt` / `AccountRuntime.kt` | 账号运行时编排、收消息与回复、分段发送、主动发起调度 | 会话锁是按会话分的（`mutexOf`），不再是全局单锁；回复相关的策略对象都在 `core/reply/` |
+| `core/reply/` | 回复行为纯逻辑：`BehaviorConfig`（配置）、`SegmentSplitter`（分段）、`ReplyPacing`（节奏与输出账本）、`SessionGovernor`（冷却/去重/退避/配额）、`ProactivePolicy`（主动发起决策） | **无 Android 依赖，改动必须同步 `core/src/test/`**；`SegmentSplitter` 关闭分段时等价于旧版 `trim().take(600)`，这条有单测锁死 |
 | `engine/di/BotHost.kt` | 暴露 `botManager` 的窄接口 | 防止 `:engine` 反向依赖 `:assembly` |
 | `assembly/AppContainer.kt` | 手写依赖注入，唯一装配全部实现的地方 | 唯一允许横跨各层 |
 | `core/SessionLog.kt` | AiLink 侧内存日志（导出用） | 排查必备 |
@@ -304,6 +305,13 @@ xb-run -a /opt/QQ/qq --no-sandbox [-q <QQ号>]
 | `[onebot] 发送超时：10 秒未收到回执` | 发出去了但无响应 | 看 NapCat 日志是否拒绝 |
 | `[onebot] 发送被拒：status=… retcode=…` | NapCat 明确拒绝 | 看 retcode 与原始响应 |
 | `[engine] 回复 失败` | AiLink 侧发送失败 | 对照上面两条 |
+| `[multi] 分段 N 条 来源=模型` | 模型遵守了 `###` 分隔指令 | 正常；来源为「句末兜底」说明模型没听话，分段可能切坏语义，应调提示词而非改切分逻辑 |
+| `[multi] 输出总量受限` / `输出总量已用尽` | 单位时间输出总量护栏生效 | 正常；想放宽就调「每分钟输出总量」 |
+| `[throttle] 会话冷却中 … 本条先排队` | 冷却合并生效，消息未丢 | 正常；随后应出现「合并 N 条待回复消息」 |
+| `[throttle] 账号小时配额已满` | 触达发送上限 | 正常护栏；确需更多则调小时上限 |
+| `[throttle] 账号退避中 … 本条仅入库` | 连续发送失败后停手 | 先看 `[onebot] 发送…` 找失败根因 |
+| `[proactive] 触发 原因=… 结果=成功 N 段` | 主动发起成功 | 正常；核对「原因」是否符合预期 |
+| `[proactive] 未发起：…` / `跳过：…` | 主动发起被策略拦下 | 日志自带原因（免打扰 / 配额 / 静默未达 / 对方刚说话） |
 | `[keepalive] 释放保活锁` 出现在息屏期间 | 系统收走了锁 | ROM 省电策略要设白名单 |
 | `账号状态变更为离线` | QQ 掉线 | 60 秒后会自动重启容器 |
 
@@ -313,6 +321,9 @@ xb-run -a /opt/QQ/qq --no-sandbox [-q <QQ号>]
 | --- | --- |
 | `Failed to connect to /127.0.0.1:3001` 循环 | QQ 是否真的登录了（看是否有 `登录态已失效` / 二维码在转） |
 | 收到消息但不回复 | 会话日志里有没有 `[engine] 处理消息`；有则看 `[onebot] 发送…` |
+| 只回一句、不分条 | 账号「更多设置」里「多条回复」是否打开；打开了看 `[multi] 分段 N 条 来源=…`，来源为「整段」说明模型输出本就没有可切分点 |
+| 连发多条消息只回一次 | 正常，会话冷却合并生效；日志有 `[throttle] 会话冷却中` 与「合并 N 条」。想改成逐条回就把冷却设为 0 |
+| 开了主动发起但一直不发 | 看 `[proactive] 未发起：…` 给出的原因；演示账号每 9–18 秒产一条消息，永远不满足静默条件，必须用真实账号验证 |
 | 每隔 20 秒断连 | 检查是否又给 OkHttp 加了 `pingInterval` |
 | 息屏后断 | 看 `keepalive` 日志与系统电池白名单 |
 | 安装卡在步骤 1 | 正常，apt 阶段 6 分钟无输出；有 `[app] 仍在进行…已耗时 Ns` 心跳 |

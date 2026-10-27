@@ -19,6 +19,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
@@ -69,6 +70,7 @@ fun RuntimeScreen(
     val report = vm.report
     val context = LocalContext.current
     var copied by remember { mutableStateOf(false) }
+    var confirmStop by remember { mutableStateOf(false) }
 
     Column(modifier = Modifier.fillMaxSize()) {
         Row(
@@ -429,8 +431,9 @@ fun RuntimeScreen(
                     Spacer(Modifier.height(8.dp))
                     InfoBanner(
                         title = "QQ 要求人工验证",
-                        message = "密码登录被要求短信/新设备验证。可以直接扫下方二维码，或在 NapCat 的 WebUi 页面完成验证——" +
-                            "直接打开腾讯的验证链接没用，验证结果传不回 NapCat。验证期间不要重启，重启会让验证会话作废。",
+                        message = "密码登录被要求短信/新设备验证。推荐直接扫下方二维码，这条路径最可靠——" +
+                            "WebUI 那条路需要 NapCat 面板密码（登录成功后才下发），而且验证必须在该页面内完成，" +
+                            "直接打开腾讯的验证链接结果传不回来。验证期间不要重启，重启会让验证会话作废。",
                         tone = BannerTone.WARNING
                     )
                     if (vm.verifyUrl.isNotBlank()) {
@@ -445,7 +448,7 @@ fun RuntimeScreen(
                                 )
                             }
                         }) {
-                            Text("打开验证页（NapCat WebUi）")
+                            Text("打开 NapCat 面板（可选）")
                         }
                     }
                 }
@@ -476,7 +479,7 @@ fun RuntimeScreen(
                         Text("启动 QQ")
                     }
                     OutlinedButton(
-                        onClick = vm::stopQq,
+                        onClick = { confirmStop = true },
                         enabled = vm.qqRunning,
                         modifier = Modifier.weight(1f)
                     ) {
@@ -577,13 +580,103 @@ fun RuntimeScreen(
             }
 
 
-            InfoBanner(
-                title = "下一步要补齐的东西",
-                message = "① 容器已可用（Ubuntu 22.04 + proot）；② 接下来在容器内安装 QQ Linux arm64 与 NapCat；③ 由前台服务托管容器进程，并把登录二维码投到界面。",
-                tone = BannerTone.WARNING
-            )
+            NextStepsCard(vm = vm, onBack = { nav.popBackStack() })
 
             Spacer(Modifier.height(28.dp))
+        }
+    }
+
+    if (confirmStop) {
+        AlertDialog(
+            onDismissRequest = { confirmStop = false },
+            title = { Text("停止 QQ？") },
+            text = {
+                Text(
+                    "停止后内置 QQ 会下线，使用它的账号会断开连接，自动回复随之中断。" +
+                        "重新启动需要再等一次容器启动。"
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    vm.stopQq()
+                    confirmStop = false
+                }) { Text("停止", color = DangerRed) }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmStop = false }) { Text("取消") }
+            }
+        )
+    }
+}
+
+/**
+ * 「接下来」清单。
+ *
+ * 旧版本这里写的是「接下来要安装 QQ 与 NapCat」，但插件已经把这两步做完，
+ * 静态文案会和实际能力矛盾。改成按实时状态勾选，并给出回到账号页的出口。
+ */
+@Composable
+private fun NextStepsCard(vm: RuntimeViewModel, onBack: () -> Unit) {
+    val finished = listOf(vm.qqInstalled, vm.qqRunning, vm.loggedIn).count { it }
+
+    AppCard {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                text = "接下来",
+                style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.onSurface,
+                modifier = Modifier.weight(1f)
+            )
+            TagChip(
+                text = "$finished / 3",
+                color = if (vm.loggedIn) OnlineGreen else WarnAmber
+            )
+        }
+        Spacer(Modifier.height(4.dp))
+        MutedText("这一页只负责让 QQ 在线；登录成功后回账号页点「测试连接」，通过即可开始自动回复。")
+
+        Spacer(Modifier.height(10.dp))
+        NextStepRow(1, "安装运行时", if (vm.qqInstalled) "已安装" else "点上方「安装 / 重装最小运行时」", vm.qqInstalled)
+        NextStepRow(2, "启动 QQ", if (vm.qqRunning) "进程已运行" else "点上方「启动 QQ」", vm.qqRunning)
+        NextStepRow(3, "扫码登录", if (vm.loggedIn) "已登录" else "用另一台手机扫上方二维码", vm.loggedIn)
+
+        Spacer(Modifier.height(12.dp))
+        Button(onClick = onBack, modifier = Modifier.fillMaxWidth()) {
+            Text(if (vm.loggedIn) "已登录，回账号页测试连接" else "返回上一页")
+        }
+    }
+}
+
+@Composable
+private fun NextStepRow(index: Int, title: String, detail: String, done: Boolean) {
+    Row(
+        modifier = Modifier.padding(vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Box(
+            modifier = Modifier
+                .size(20.dp)
+                .background(
+                    if (done) OnlineGreen else MaterialTheme.colorScheme.surfaceVariant,
+                    CircleShape
+                ),
+            contentAlignment = Alignment.Center
+        ) {
+            Text(
+                text = if (done) "✓" else index.toString(),
+                style = MaterialTheme.typography.labelSmall,
+                color = if (done) androidx.compose.ui.graphics.Color.White
+                else MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+        Spacer(Modifier.width(8.dp))
+        Column {
+            Text(
+                text = title,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurface
+            )
+            MutedText(detail)
         }
     }
 }

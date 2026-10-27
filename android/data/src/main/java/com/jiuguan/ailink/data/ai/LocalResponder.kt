@@ -46,9 +46,32 @@ object LocalResponder {
         "嗯嗯，我看到你发的了。"
     )
 
+    /** 静默续话的兜底文案：承接上文，不寒暄。 */
+    private val proactiveIdle = listOf(
+        "对了，你上次说的那事后来怎么样了？",
+        "突然想起你之前提的那个，有下文了吗？",
+        "刚翻到咱们之前聊的，你后来定了没？"
+    )
+
+    /** 定时打招呼的兜底文案。 */
+    private val proactiveGreeting = listOf(
+        "在忙吗？没事，就是随口问一句。",
+        "今天怎么样，还顺利吗？"
+    )
+
+    /**
+     * 主动发起的兜底文案（未配置真实 AI、或配置为本地模拟时使用）。
+     *
+     * 存在意义是让「主动发起」这条链路在没有任何密钥的情况下也能跑通、可演示：
+     * 否则演示账号永远触发不了，等于这条能力无法验收。
+     */
+    fun proactive(scheduled: Boolean): String {
+        val pool = if (scheduled) proactiveGreeting else proactiveIdle
+        return pool[Random.nextInt(pool.size)]
+    }
+
     fun reply(persona: String, incoming: String): String {
         val text = incoming.trim()
-
         val pool = when {
             text.matches(
                 Regex(

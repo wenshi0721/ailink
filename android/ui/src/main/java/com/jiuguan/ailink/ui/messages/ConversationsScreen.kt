@@ -109,6 +109,20 @@ fun ConversationsScreen(
         Spacer(Modifier.height(10.dp))
 
         LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            // 首页选了「某个账号」时这里会只剩它的会话，必须留一个就地取消的入口
+            if (!activeName.isNullOrBlank()) {
+                item(key = "account-filter") {
+                    FilterChip(
+                        selected = true,
+                        onClick = vm::clearAccountFilter,
+                        label = { Text("只看 $activeName ✕") },
+                        colors = FilterChipDefaults.filterChipColors(
+                            selectedContainerColor = MaterialTheme.colorScheme.primaryContainer,
+                            selectedLabelColor = MaterialTheme.colorScheme.onPrimaryContainer
+                        )
+                    )
+                }
+            }
             items(ConversationFilter.entries.toList(), key = { it.name }) { item ->
                 FilterChip(
                     selected = filter == item,
@@ -125,10 +139,15 @@ fun ConversationsScreen(
         Spacer(Modifier.height(12.dp))
 
         if (conversations.isEmpty()) {
-            val filtering = query.isNotBlank() || filter != ConversationFilter.ALL
+            val filtering = query.isNotBlank() || filter != ConversationFilter.ALL ||
+                !activeName.isNullOrBlank()
             EmptyState(
                 title = if (filtering) "没有匹配的会话" else "暂无会话",
-                description = if (filtering) "换个关键词，或清除筛选条件" else "账号收到消息后会自动出现在这里",
+                description = if (filtering) {
+                    "换个关键词，或点「清除筛选」恢复全部会话"
+                } else {
+                    "账号收到消息后会自动出现在这里"
+                },
                 actionText = if (filtering) "清除筛选" else null,
                 onAction = if (filtering) ({ vm.clearFilters() }) else null
             )

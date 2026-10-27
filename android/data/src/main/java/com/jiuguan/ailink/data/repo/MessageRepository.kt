@@ -43,6 +43,31 @@ class MessageRepository(
     suspend fun recentForContext(convId: String, limit: Int = 8): List<MessageEntity> =
         messageDao.recent(convId, limit).reversed()
 
+    /** 近 [windowMs] 内该账号成功发出的条数，用于账号级小时配额。 */
+    suspend fun countSentInWindow(accountId: String, windowMs: Long): Int =
+        messageDao.countSentSince(accountId, System.currentTimeMillis() - windowMs)
+
+    // ------------------------------------------------------------ 主动发起
+
+    /** 该账号的全部会话（主动发起要从中挑一个对象）。 */
+    suspend fun conversationsOf(accountId: String): List<ConversationEntity> =
+        conversationDao.findByAccount(accountId)
+
+    /** 指定来源在最近 [windowMs] 内成功发出的条数（主动发起的每小时 / 每天配额）。 */
+    suspend fun countSentByOrigin(accountId: String, origin: String, windowMs: Long): Int =
+        messageDao.countByOriginSince(accountId, origin, System.currentTimeMillis() - windowMs)
+
+    /** 每个会话最后一次主动发起的时间；没有发起过的会话不在结果里。 */
+    suspend fun lastProactiveAtByConversation(accountId: String): Map<String, Long> =
+        messageDao.lastByOriginPerConversation(accountId, MessageOrigin.PROACTIVE)
+            .associate { it.convId to it.at }
+
+    /** 双方都说过话的会话 id 集合。主动发起只在这些会话里挑对象。 */
+    suspend fun twoWayConversations(accountId: String): Set<String> =
+        messageDao.directionKindsPerConversation(accountId)
+            .filter { it.total >= 2 }
+            .mapTo(mutableSetOf()) { it.convId }
+
     /** 写入收到的消息；重复的消息（同一平台消息 id）会被忽略。 */
     suspend fun recordIncoming(account: AccountEntity, msg: IncomingMessage): Boolean {
         val convId = convIdOf(account.id, msg.peerKey)
