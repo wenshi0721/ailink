@@ -27,7 +27,36 @@ class AiLinkApp : Application(), AppHost, BotHost {
         // 会话日志落盘：导出往往发生在"复现完 → 重启 App → 再导出"之后，
         // 只放内存的话现场已经没了。放在容器初始化之前，尽早接上。
         SessionLog.attach(File(filesDir, "session.log"))
+        installCrashLogger()
         container = AppContainer(this)
         container.bootstrap()
+    }
+
+    /**
+     * 崩溃落盘。
+     *
+     * 闪退的真实栈只在 logcat 里，而用户拿不到 logcat——每次只能靠"猜 + 加日志 + 再复现"。
+     * 这里把未捕获异常写进会话日志（含线程名与栈），下次导出日志就能直接看到崩因。
+     * 记录完仍交给原处理器，保持系统的崩溃处理行为（弹窗/杀进程）不变。
+     */
+    private fun installCrashLogger() {
+        val previous = Thread.getDefaultUncaughtExceptionHandler()
+        Thread.setDefaultUncaughtExceptionHandler { thread, error ->
+            runCatching {
+                SessionLog.add(
+                    "crash",
+                    "未捕获异常 线程=${thread.name} ${error.javaClass.name}: ${error.message ?: ""}"
+                )
+                error.stackTraceToString()
+                    .lineSequence()
+                    .take(40)
+                    .forEach { SessionLog.add("crash", "    $it") }
+            }
+            if (previous != null) {
+                previous.uncaughtException(thread, error)
+            } else {
+                android.os.Process.killProcess(android.os.Process.myPid())
+            }
+        }
     }
 }

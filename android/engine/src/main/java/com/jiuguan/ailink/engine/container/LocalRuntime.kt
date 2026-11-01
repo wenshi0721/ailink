@@ -560,6 +560,18 @@ class LocalRuntime(private val context: Context) {
         return if (file.exists()) file.readText() else ""
     }
 
+    /**
+     * 日志文件的体积（容器日志, 安装日志），单位字节。
+     *
+     * 界面要显示"大概多大"，没必要为此把几百 KB 的文本完整读进内存。
+     */
+    fun logSizes(): Pair<Long, Long> {
+        val launch = launchLogFile().let { if (it.exists()) it.length() else 0L }
+        val install = File(runtimeDir, "rootfs/opt/ailink/install.log")
+            .let { if (it.exists()) it.length() else 0L }
+        return launch to install
+    }
+
     /** 读取 NapCat 写出的登录二维码。 */
     fun readQrCode(): ByteArray? {
         val file = File(

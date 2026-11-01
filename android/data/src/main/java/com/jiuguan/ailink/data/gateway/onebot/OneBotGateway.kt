@@ -17,9 +17,11 @@ import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -75,6 +77,18 @@ class OneBotGateway(
     /** 上次补拉时间：WebSocket 抖动频繁触发 onOpen 时，避免反复拉同一批历史。 */
     @Volatile
     private var lastCatchUpAt = 0L
+
+    /** 心跳连续超时次数；连续 2 次才降级为"连接中"。 */
+    @Volatile
+    private var heartbeatTimeouts = 0
+
+    /** 连续发送失败次数（retcode=1200 之类），用于识别"桥接端还在、内核已无响应"。 */
+    @Volatile
+    private var sendFailures = 0
+
+    /** 时钟跳变探测用的基线。 */
+    private var lastWallAt = 0L
+    private var lastMonoAt = 0L
 
     override fun start() {
         if (running) return
@@ -174,6 +188,7 @@ class OneBotGateway(
         heartbeatJob = scope.launch {
             while (isActive && running) {
                 delay(25_000L)
+                detectClockJump()
                 val ws = socket ?: break
                 val echo = "hb-${System.nanoTime()}"
                 val deferred = CompletableDeferred<String>()
@@ -192,12 +207,73 @@ class OneBotGateway(
                 pending.remove(echo)
                 val latency = (System.nanoTime() - started) / 1_000_000L
                 if (reply == null) {
-                    _events.emit(GatewayEvent.Status(online = true, selfId = selfId, latencyMs = -1L, error = "心跳超时"))
+                    // 偶发一次超时不代表断线（AI 阻塞、GC 都可能），连续两次才降级，
+                    // 免得状态在"在线/连接中"之间反复闪。
+                    heartbeatTimeouts += 1
+                    if (heartbeatTimeouts >= 2) {
+                        _events.emit(
+                            GatewayEvent.Status(
+                                online = false,
+                                connecting = true,
+                                selfId = selfId,
+                                error = "心跳连续超时"
+                            )
+                        )
+                    } else {
+                        _events.emit(
+                            GatewayEvent.Status(online = true, selfId = selfId, latencyMs = -1L, error = "心跳超时")
+                        )
+                    }
+                    continue
+                }
+
+                heartbeatTimeouts = 0
+                // 关键判据：WS 连着 ≠ QQ 账号在线。
+                // NapCat 的 WS Server 与账号登录状态是解耦的——账号被踢下线后，
+                // 端口照样监听、心跳照样有回执，过去只看 WS 就会一直显示"在线"。
+                val accountOnline = runCatching {
+                    json.parseToJsonElement(reply)
+                        .jsonObject["data"]?.jsonObject?.get("online")
+                        ?.jsonPrimitive?.booleanOrNull
+                }.getOrNull()
+
+                if (accountOnline == false) {
+                    _events.emit(
+                        GatewayEvent.Status(
+                            online = false,
+                            selfId = selfId,
+                            latencyMs = latency,
+                            error = "QQ 账号已离线（桥接端仍连接）"
+                        )
+                    )
                 } else {
                     _events.emit(GatewayEvent.Status(online = true, selfId = selfId, latencyMs = latency))
                 }
             }
         }
+    }
+
+    /**
+     * 时钟跳变探测。
+     *
+     * 手机休眠时墙钟还在走、单调时钟会暂停；唤醒后两者增量会对不上。容器里的 QQ 用墙钟
+     * 校验票据，如果唤醒瞬间跳了几秒，服务端可能判定会话失效——这是"非网络"方向的一个
+     * 可疑成因，这里只做留痕，便于把掉线时刻与跳变对齐后再下结论。
+     */
+    private fun detectClockJump() {
+        val wall = System.currentTimeMillis()
+        val mono = android.os.SystemClock.elapsedRealtime()
+        if (lastWallAt > 0 && lastMonoAt > 0) {
+            val drift = (wall - lastWallAt) - (mono - lastMonoAt)
+            if (kotlin.math.abs(drift) > 3_000L) {
+                com.jiuguan.ailink.core.SessionLog.add(
+                    "onebot",
+                    "检测到时钟跳变 ${drift}ms（设备可能刚从休眠唤醒）"
+                )
+            }
+        }
+        lastWallAt = wall
+        lastMonoAt = mono
     }
 
     private fun handleFrame(text: String) {
@@ -507,11 +583,28 @@ class OneBotGateway(
         val status = root.jStr("status")
         val retcode = root.jLong("retcode")
         val ok = status == "ok" || retcode == 0L
-        if (!ok) {
+        if (ok) {
+            sendFailures = 0
+        } else {
             com.jiuguan.ailink.core.SessionLog.add(
                 "onebot",
                 "发送被拒：status=$status retcode=$retcode ${reply.take(200)}"
             )
+            // retcode=1200 = NTEvent/NodeIKernelMsgService 无响应：桥接端与 WS 都正常，
+            // 但 QQ 内核已经发不出消息。界面上必须反映为异常，否则就是"显示在线、实际发不出去"。
+            if (retcode == 1200L) {
+                sendFailures += 1
+                if (sendFailures >= 2) {
+                    _events.tryEmit(
+                        GatewayEvent.Status(
+                            online = false,
+                            selfId = selfId,
+                            latencyMs = -1L,
+                            error = "QQ 内核无响应（发送被拒 1200）"
+                        )
+                    )
+                }
+            }
         }
         return ok
     }

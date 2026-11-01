@@ -545,29 +545,46 @@ fun RuntimeScreen(
                     }
                 }
 
-                if (vm.logs.isNotEmpty()) {
-                    Spacer(Modifier.height(12.dp))
-                    TextButton(
+                // 日志与诊断：无条件常驻。
+                // 旧实现把入口藏在 `if (vm.logs.isNotEmpty())` 里，而 vm.logs 只在安装期有内容，
+                // 于是"QQ 正常在线"这个最需要导日志的时刻，按钮反而不存在。
+                Spacer(Modifier.height(14.dp))
+                SoftDivider()
+                Spacer(Modifier.height(12.dp))
+                Text("日志与诊断", style = MaterialTheme.typography.titleSmall)
+                Spacer(Modifier.height(3.dp))
+                MutedText(vm.logSummary())
+                Spacer(Modifier.height(8.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(
                         onClick = {
-                            val message = vm.exportLog(context)
-                            Toast.makeText(context, message, Toast.LENGTH_LONG).show()
+                            vm.exportLog(context) { message ->
+                                Toast.makeText(context, message, Toast.LENGTH_LONG).show()
+                            }
                         },
-                        modifier = Modifier.fillMaxWidth()
+                        modifier = Modifier.weight(1f)
                     ) {
-                        Text("导出日志文件（保存到下载目录）")
+                        Text("导出日志文件")
                     }
-                    TextButton(
+                    OutlinedButton(
                         onClick = {
-                            val text = vm.readFullLog().ifBlank { vm.logs.joinToString("\n") }
-                            val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                            clipboard.setPrimaryClip(ClipData.newPlainText("ailink-install", text))
+                            vm.copyAllLog(context) { message ->
+                                Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
+                            }
                         },
-                        modifier = Modifier.fillMaxWidth()
+                        modifier = Modifier.weight(1f)
                     ) {
-                        Text("复制完整安装日志")
+                        Text("复制全部")
                     }
+                }
+                Spacer(Modifier.height(4.dp))
+                MutedText("导出不影响 QQ 运行。内容：环境信息 + 安装日志 + 容器日志 + 会话日志。")
+
+                val tail = remember(vm.logs.size) { vm.logTail() }
+                if (tail.isNotBlank()) {
+                    Spacer(Modifier.height(8.dp))
                     Text(
-                        text = vm.logs.takeLast(12).joinToString("\n"),
+                        text = tail,
                         style = MaterialTheme.typography.bodySmall.copy(fontSize = 10.sp, lineHeight = 15.sp),
                         fontFamily = FontFamily.Monospace,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,

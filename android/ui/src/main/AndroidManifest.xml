@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 库模块清单：只声明本模块代码直接需要的权限，最终由 :app 合并 -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- 运行时页展示当前网络类型（NetworkCapabilities） -->
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+</manifest>

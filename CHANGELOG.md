@@ -7,6 +7,18 @@
 
 ## [未发布]
 
+## [1.1.7] - 2026-11-01
+
+### 新增
+
+- **容器 DNS 跟随系统网络**：启动前按当前网络重写 `resolv.conf`（系统 DNS 优先，公共 DNS 仅兜底），并在每次启动前刷新，换 Wi-Fi / 换卡后不再沿用上一次的失效 DNS
+- **网络变化即时介入**：新增网络监听；网络恢复且已通过校验时，重写容器 DNS，若 QQ 正处于离线则立即重启容器，不必再等 90 秒自愈窗口；未校验的网络（弱网、需认证的门户页）只记日志、不重启，避免无意义重启
+- **日志与诊断一键导出**：运行时页新增「导出日志文件」与「复制全部」，内容包含环境信息（版本、设备、当前网络）、安装日志、容器日志与会话日志，便于反馈问题时一次给全
+
+### 修复
+
+- 切换 Wi-Fi 与移动数据后容器内域名解析失败、QQ 长时间连不回来：根因是 `resolv.conf` 在安装时写死公共 DNS，换网后运营商对 UDP 53 劫持或丢包会直接导致解析失败，内核随后把账号判为离线
+
 ## [1.1.6] - 2026-10-27
 
 ### 新增
@@ -146,7 +158,8 @@
 - 内置 QQ 运行时首次登录需第二块屏幕扫码（平台安全策略）
 - NapCat 组件禁止商用，含该组件的 APK 不可商业分发（详见 THIRD-PARTY-NOTICES.md）
 
-[未发布]: https://github.com/wenshi0721/ailink/compare/1.1.6...HEAD
+[未发布]: https://github.com/wenshi0721/ailink/compare/1.1.7...HEAD
+[1.1.7]: https://github.com/wenshi0721/ailink/releases/tag/1.1.7
 [1.1.6]: https://github.com/wenshi0721/ailink/releases/tag/1.1.6
 [1.1.5]: https://github.com/wenshi0721/ailink/releases/tag/1.1.5
 [1.1.4]: https://github.com/wenshi0721/ailink/releases/tag/1.1.4

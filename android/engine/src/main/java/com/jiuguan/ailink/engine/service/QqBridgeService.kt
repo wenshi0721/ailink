@@ -12,6 +12,7 @@ import androidx.core.app.NotificationCompat
 import com.jiuguan.ailink.engine.R
 import com.jiuguan.ailink.core.AppPrefs
 import com.jiuguan.ailink.engine.container.LocalRuntime
+import com.jiuguan.ailink.engine.container.NetworkDns
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -52,6 +53,15 @@ class QqBridgeService : Service() {
 
         /** 这么短时间内再次被服务端踢下线，说明重登解决不了问题，转为待扫码。 */
         private const val KICK_RETRY_WINDOW_MS = 10 * 60_000L
+
+        /** 会话存活不足这个时长，视为"短命会话"（登录后很快被断，多见于风控期）。 */
+        private const val SHORT_SESSION_MS = 3 * 60_000L
+
+        /** 连续这么多次短命会话，判定为风控活跃期，进入冷静期而不是继续重启。 */
+        private const val SHORT_SESSION_LIMIT = 3
+
+        /** 冷静期时长：这段时间内不再自动重启，避免把风控分越刷越高。 */
+        private const val COOLDOWN_MS = 15 * 60_000L
 
         /** 降级为扫码模式的保持时长（借鉴 XiaoYou：6 小时后自动回到快速登录）。 */
         private const val CAPTCHA_QR_MODE_MS = 6 * 60 * 60_000L
@@ -114,17 +124,32 @@ class QqBridgeService : Service() {
         fun start(context: Context) {
             if (_running.value) return
             val intent = Intent(context, QqBridgeService::class.java)
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                context.startForegroundService(intent)
-            } else {
-                context.startService(intent)
+            // Android 12+ 在后台启动前台服务会抛 ForegroundServiceStartNotAllowedException。
+            // 这类异常发生在主线程，不兜住就是"点一下闪退"。
+            runCatching {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    context.startForegroundService(intent)
+                } else {
+                    context.startService(intent)
+                }
+            }.onFailure { error ->
+                com.jiuguan.ailink.core.SessionLog.add(
+                    "qq",
+                    "启动 QQ 服务失败：${error.javaClass.simpleName} ${error.message ?: ""}"
+                )
             }
         }
 
         fun stop(context: Context) {
-            context.startService(
-                Intent(context, QqBridgeService::class.java).setAction("stop")
-            )
+            val intent = Intent(context, QqBridgeService::class.java).setAction("stop")
+            runCatching { context.startService(intent) }.onFailure {
+                // 后台被拒时退化为直接停服务：少了优雅收尾，但不会把界面带崩
+                com.jiuguan.ailink.core.SessionLog.add(
+                    "qq",
+                    "停止 QQ 服务失败，改为直接 stopService：${it.javaClass.simpleName}"
+                )
+                runCatching { context.stopService(Intent(context, QqBridgeService::class.java)) }
+            }
         }
 
         /**
@@ -134,9 +159,16 @@ class QqBridgeService : Service() {
          * 必须立即生效；但也不会在服务未运行时拉起进程（交给用户手动启动）。
          */
         fun restart(context: Context) {
-            context.startService(
-                Intent(context, QqBridgeService::class.java).setAction("restart")
-            )
+            runCatching {
+                context.startService(
+                    Intent(context, QqBridgeService::class.java).setAction("restart")
+                )
+            }.onFailure { error ->
+                com.jiuguan.ailink.core.SessionLog.add(
+                    "qq",
+                    "重启 QQ 服务失败：${error.javaClass.simpleName} ${error.message ?: ""}"
+                )
+            }
         }
 
         fun clear() {
@@ -190,6 +222,51 @@ class QqBridgeService : Service() {
     @Volatile
     private var lastCaptchaHandledAt = 0L
 
+    /** 上一次记录"掉线"的时间，用于抑制 NapCat 自愈期间重复推送的离线事件。 */
+    @Volatile
+    private var lastOfflineLogAt = 0L
+
+    /** 系统网络监听：切网/断网/弱网都会回调。 */
+    private var networkWatcher: NetworkWatcher? = null
+
+    /** 当前网络是否真正可用（VALIDATED）。不可用时不做容器重启，避免白折腾。 */
+    @Volatile
+    private var networkValidated = true
+
+    /** 最近一次网络事件的时间，用来判断"这次掉线是不是紧跟换网"。 */
+    @Volatile
+    private var lastNetworkEventAt = 0L
+
+    /** 最近一次断网的时间，用于识别"网络刚恢复"。 */
+    @Volatile
+    private var lastNetworkLostAt = 0L
+
+    @Volatile
+    private var lastNetworkLogAt = 0L
+
+    /** 上一次已知的传输类型，用于断网时正确标注（断网后 transport 查不到了）。 */
+    @Volatile
+    private var lastCellular = false
+    @Volatile
+    private var lastWifi = false
+
+    /** 一次断网只换算一次重启：系统会连发 onAvailable + onCapabilitiesChanged。 */
+    @Volatile
+    private var networkForwardedRestart = false
+
+    /** 最近一次登录成功的时间，用于计算会话存活时长。 */
+    @Volatile
+    private var lastLoginAt = 0L
+
+    /** 连续"短命会话"次数：登录后不足 3 分钟就掉，重启只会加重风控。 */
+    @Volatile
+    private var shortSessions = 0
+
+    /** 疑似风控的冷静期截止时间；期间不自动重启。 */
+    @Volatile
+    private var cooldownUntil = 0L
+    private var coolingLogged = false
+
     /** 上次启动时间：用于启动冷却，避免连点/自愈抖动把刚出的二维码作废。 */
     @Volatile
     private var lastLaunchAt = 0L
@@ -211,6 +288,10 @@ class QqBridgeService : Service() {
     override fun onCreate() {
         super.onCreate()
         createChannel()
+        // 网络事件直接决定 QQ 长连接的生死：切 WiFi/移动数据、弱网掉线都在这里
+        networkWatcher = NetworkWatcher(applicationContext) { available, validated, cellular ->
+            handleNetworkChanged(available, validated, cellular)
+        }.also { it.start() }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -239,6 +320,10 @@ class QqBridgeService : Service() {
         silentRetries = 0
         forceRelaunch = false
         lastKickAt = 0L
+        // 手动启动 = 用户主动介入，清掉冷静期与短命会话计数
+        cooldownUntil = 0L
+        coolingLogged = false
+        shortSessions = 0
         // 新进程还没登录：不复位的话 watchQrCode 会以"已登录"为由跳过新二维码，
         // 用户点「停止」再「启动」后就再也看不到码了（实测踩到过）。
         _loggedIn.value = false
@@ -265,6 +350,13 @@ class QqBridgeService : Service() {
      */
     private fun launchAndWatch(runtime: LocalRuntime, uin: String, qrMode: Boolean = false) {
         lastLaunchAt = System.currentTimeMillis()
+
+        // 每次启动前按当前网络重写容器 DNS：换过卡/换过 WiFi 后，
+        // 旧的 resolv.conf 可能指向已经不可达的 DNS，表现为"连不上、登录不了"。
+        val dns = NetworkDns.writeResolvConf(applicationContext, runtime.runtimeDir)
+        if (dns.isNotEmpty()) {
+            appendLog("[net] 启动前刷新 DNS：${dns.take(3).joinToString(",")}")
+        }
 
         // QQ 要求人工验证期间强制走二维码模式：带 -q 只会再触发一次"需要验证码"，
         // 而 NapCat 在验证码分支里不会生成二维码，界面就一直没有码可扫。
@@ -399,6 +491,18 @@ class QqBridgeService : Service() {
                 offlineSince = now
                 continue
             }
+            // 冷静期：连续短命会话说明重启已经无效，继续重启只会把风控分刷得更高
+            if (now < cooldownUntil) {
+                if (!coolingLogged) {
+                    coolingLogged = true
+                    appendLog(
+                        "[app] 冷静期剩余 ${(cooldownUntil - now) / 60_000} 分钟，" +
+                            "暂停自动重启（期间手工扫码不受影响）"
+                    )
+                }
+                offlineSince = 0L
+                continue
+            }
             // 服务端踢下线：重登只会更快作废凭据，停下来等人工扫码
             if (autoRestartSuppressed) {
                 if (!suppressedLogged) {
@@ -489,6 +593,124 @@ class QqBridgeService : Service() {
         true
     }.getOrDefault(false)
 
+    /**
+     * 网络状态变化处理。
+     *
+     * 三类事件分开对待：
+     *  - 断网：只记录，不重启（没网重启也是白搭，还会白耗凭据）；
+     *  - 已连接但未校验（弱网/认证页）：同样不重启；
+     *  - 已校验：重写容器 DNS；若 QQ 正处于离线，立刻触发重启，不等 90 秒窗口。
+     */
+    private fun handleNetworkChanged(available: Boolean, validated: Boolean, cellular: Boolean) {
+        // 系统回调线程上抛异常会直接带走整个进程，这里兜住
+        runCatching { handleNetworkChangedInner(available, validated, cellular) }
+            .onFailure { appendLog("[net] 处理网络变化失败：${it.message ?: it.javaClass.simpleName}") }
+    }
+
+    private fun handleNetworkChangedInner(available: Boolean, validated: Boolean, cellular: Boolean) {
+        val now = System.currentTimeMillis()
+
+        if (!available) {
+            lastNetworkEventAt = now
+            lastNetworkLostAt = now
+            networkValidated = false
+            networkForwardedRestart = false
+            if (now - lastNetworkLogAt > 3_000L) {
+                lastNetworkLogAt = now
+                // 断网时 transport 已经拿不到了，用上一次已知的类型标注，避免误报成 WiFi
+                appendLog("[net] 网络已断开（原 ${lastNetworkKind()}）")
+            }
+            return
+        }
+
+        lastNetworkEventAt = now
+        networkValidated = validated
+        if (cellular) lastCellular = true else lastWifi = true
+
+        if (!validated) {
+            if (now - lastNetworkLogAt > 10_000L) {
+                lastNetworkLogAt = now
+                val kind = if (cellular) "移动数据" else "WiFi"
+                appendLog("[net] 网络已连接但未校验通过（$kind），暂不重启容器")
+            }
+            return
+        }
+
+        val kind = if (cellular) "移动数据" else "WiFi"
+        // 换网（WiFi↔移动数据）后运营商 DNS 会变，容器的 resolv.conf 必须跟着换
+        val dns = NetworkDns.writeResolvConf(
+            applicationContext,
+            LocalRuntime(applicationContext).runtimeDir
+        )
+        val justRecovered = lastNetworkLostAt > 0 && now - lastNetworkLostAt < 120_000L
+        if (now - lastNetworkLogAt > 10_000L || justRecovered) {
+            lastNetworkLogAt = now
+            appendLog(
+                "[net] 网络已可用（$kind${if (justRecovered) "，刚恢复" else ""}），" +
+                    "DNS=${dns.take(3).joinToString(",").ifBlank { "未取到" }}"
+            )
+        }
+
+        // 一次断网只触发一次重启：onAvailable 与 onCapabilitiesChanged 会连着回调好几次，
+        // 之前 14:23:20 和 14:23:22 各触发一次，日志里出现重复的"立即重启容器"。
+        if (justRecovered && _offline.value && !networkForwardedRestart) {
+            networkForwardedRestart = true
+            forceRelaunch = true
+            appendLog("[net] 网络恢复且 QQ 处于离线，立即重启容器")
+        }
+    }
+
+    private fun lastNetworkKind(): String = when {
+        lastCellular -> "移动数据"
+        lastWifi -> "WiFi"
+        else -> "网络"
+    }
+
+    /**
+     * 记录本次会话的存活时长，并在"连续短命"时拉起冷静期。
+     *
+     * 依据：10-28 与 11-01 两份日志里，风控活跃期的会话存活从 1.5 小时塌到 22 秒～3 分钟，
+     * 而每次重启都会产生新的登录事件——越重启，风控分越高，会话越短，形成正反馈。
+     * 所以判定"重启已经没用"时，应当停下来等评分回落，而不是继续重试。
+     */
+    private fun noteSessionEnded(now: Long) {
+        val loginAt = lastLoginAt
+        if (loginAt <= 0) return
+        val alive = now - loginAt
+
+        // 网络刚抖过就掉线，归因给网络，不能算作风控信号。
+        // 依据：11-01 早上的两次"短命会话"发生在地铁里，QQ 并未下发风险设备通知，
+        // 把它们计入风控只会让冷静期误伤。
+        val networkRecent = lastNetworkEventAt > 0 && now - lastNetworkEventAt < 5 * 60_000L
+        if (alive >= SHORT_SESSION_MS || networkRecent) {
+            if (shortSessions > 0) shortSessions = 0
+            return
+        }
+
+        shortSessions += 1
+        if (shortSessions >= SHORT_SESSION_LIMIT) {
+            cooldownUntil = now + COOLDOWN_MS
+            coolingLogged = false
+            appendLog(
+                "[app] 连续 $shortSessions 次会话不足 ${SHORT_SESSION_MS / 60_000} 分钟且期间无网络异常" +
+                    "（疑似风控），暂停自动重启 ${COOLDOWN_MS / 60_000} 分钟"
+            )
+            updateNotification("疑似风控：暂停自动重启 ${COOLDOWN_MS / 60_000} 分钟")
+        } else {
+            appendLog("[app] 本次会话仅存活 ${alive / 1000} 秒（第 $shortSessions 次短命会话）")
+        }
+    }
+
+    /** 掉线日志的附注：最近 2 分钟内有网络事件时标出来，便于事后归因。 */
+    private fun networkHint(): String {
+        val since = System.currentTimeMillis() - lastNetworkEventAt
+        return if (lastNetworkEventAt > 0 && since < 120_000L) {
+            "（最近 ${since / 1000}s 内有网络变化）"
+        } else {
+            ""
+        }
+    }
+
     /** 重启容器内的 QQ 进程（复用当前配置，含 -q 快速登录）。 */
     private fun relaunch(force: Boolean = false, qrMode: Boolean = false) {
         // 启动冷却：自愈循环与看门狗可能在同一秒内各自触发一次，
@@ -497,6 +719,11 @@ class QqBridgeService : Service() {
         val sinceLast = System.currentTimeMillis() - lastLaunchAt
         if (!force && lastLaunchAt > 0 && sinceLast < LAUNCH_COOLDOWN_MS) {
             appendLog("[app] 距上次启动仅 ${sinceLast / 1000}s，跳过本次重启（冷却中）")
+            return
+        }
+        // 没网时重启只会白折腾一场，还会白白作废一次登录凭据
+        if (!networkValidated) {
+            appendLog("[app] 当前网络未通过校验（弱网/无网），跳过本次重启，等网络恢复")
             return
         }
 
@@ -563,7 +790,10 @@ class QqBridgeService : Service() {
             suppressedLogged = false
             // 这两行每次登录会各命中一次，只在首次迁移时落一条日志，
             // 否则日志里看不到"登录已就绪"这个关键锚点（NapCat 自己不打印在线）
-            if (!wasLoggedIn) appendLog("[app] 登录成功")
+            if (!wasLoggedIn) {
+                appendLog("[app] 登录成功")
+                lastLoginAt = System.currentTimeMillis()
+            }
             // 已登录就不该再展示二维码：清空而不是靠 watchQrCode 里的闸门拦
             _qr.value = null
             // 扫码成功后凭据会重新生效，界面上的「登录态已失效」提示必须同步撤掉
@@ -578,9 +808,16 @@ class QqBridgeService : Service() {
         // 未登录阶段的 status=20 推送不代表"掉线"——此时没有会话可掉，
         // 重启容器只会让用户刚扫的二维码作废。
         if (line.contains("账号状态变更为离线") && _loggedIn.value) {
-            _offline.value = true
-            appendLog("[app] 检测到 QQ 掉线，90 秒内未恢复将自动重启容器")
-            updateNotification("QQ 掉线，正在等待恢复")
+            // NapCat 在自愈过程中会把这条重复推好几次（实测 09:44 连推 4 条），
+            // 5 秒内只记一条，否则日志被同一事件刷屏。
+            val now = System.currentTimeMillis()
+            if (now - lastOfflineLogAt > 5_000L) {
+                lastOfflineLogAt = now
+                _offline.value = true
+                noteSessionEnded(now)
+                appendLog("[app] 检测到 QQ 掉线，90 秒内未恢复将自动重启容器${networkHint()}")
+                updateNotification("QQ 掉线，正在等待恢复")
+            }
         }
         // NapCat 自己已经在处置，别在同一时刻杀进程
         if (line.contains("账号已离线，正在重启 Worker")) {
@@ -716,32 +953,47 @@ class QqBridgeService : Service() {
         }
     }
 
+    /**
+     * 追加一行到界面日志，并持久化"我们自己的"日志。
+     *
+     * 只有 `[app]` / `[net]` 前缀的行会进 SessionLog：容器原始输出（QQ/NapCat 的 stdout）
+     * 已经由 launch log 落盘，再抄一份只会把会话日志刷成几万行。
+     * 之前只认 `[app]`，导致 `[net]` 网络事件在导出的日志里彻底消失——排查时等于瞎子。
+     */
     private fun appendLog(line: String) {
         _logs.value = (_logs.value + line).takeLast(500)
-        if (line.startsWith("[app]")) {
-            com.jiuguan.ailink.core.SessionLog.add("qq", line.removePrefix("[app] ").trim())
+        val tag = when {
+            line.startsWith("[app]") -> "qq"
+            line.startsWith("[net]") -> "net"
+            else -> return
         }
+        com.jiuguan.ailink.core.SessionLog.add(tag, line.substringAfter("] ").trim())
     }
 
     private fun shutdown() {
-        keepAlive.release()
-        logJob?.cancel()
-        qrJob?.cancel()
-        process?.destroy()
+        runCatching { keepAlive.release() }
+        runCatching { logJob?.cancel() }
+        runCatching { qrJob?.cancel() }
+        runCatching { process?.destroy() }
         process = null
         _running.value = false
-        stopForegroundCompat()
-        stopSelf()
+        runCatching { stopForegroundCompat() }
+        runCatching { stopSelf() }
     }
 
     override fun onDestroy() {
-        keepAlive.release()
-        logJob?.cancel()
-        qrJob?.cancel()
-        process?.destroy()
-        scope.cancel()
+        // 收尾阶段任何一步抛异常都会让进程崩在 onDestroy 里（表现为"点停止就闪退"），
+        // 逐步兜住：宁可少释放一个锁，也不能崩。
+        runCatching { keepAlive.release() }
+        runCatching { networkWatcher?.stop() }
+        networkWatcher = null
+        runCatching { logJob?.cancel() }
+        runCatching { qrJob?.cancel() }
+        runCatching { process?.destroy() }
+        process = null
+        runCatching { scope.cancel() }
         _running.value = false
-        super.onDestroy()
+        runCatching { super.onDestroy() }
     }
 
     private fun createChannel() {

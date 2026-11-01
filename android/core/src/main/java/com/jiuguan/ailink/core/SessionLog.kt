@@ -65,6 +65,43 @@ object SessionLog {
         runCatching { file.writeText("") }.onFailure { sinkBroken = true }
     }
 
+    /** 当前缓冲行数（廉价，供界面显示摘要，不去读整个日志文件）。 */
+    @Synchronized
+    fun lineCount(): Int = buffer.size
+
+    /**
+     * 只取最后 [lines] 行，供界面预览。
+     *
+     * 界面每帧都可能重绘，不能为此把几百 KB 的日志整份读进内存——这里从文件尾部
+     * 读一段（最多 16 KB）再切行，成本与日志总量无关。
+     */
+    @Synchronized
+    fun tail(lines: Int): String {
+        if (lines <= 0) return ""
+        val file = sink
+        if (file != null && file.exists() && file.length() > 0L) {
+            val readBytes = minOf(file.length(), 16L * 1024L).toInt()
+            val text = runCatching {
+                java.io.RandomAccessFile(file, "r").use { raf ->
+                    raf.seek(file.length() - readBytes)
+                    val bytes = ByteArray(readBytes)
+                    raf.readFully(bytes)
+                    String(bytes, Charsets.UTF_8)
+                }
+            }.getOrNull()
+            if (!text.isNullOrBlank()) {
+                // 首行可能是被截断的半行，丢掉
+                return text.lineSequence()
+                    .drop(1)
+                    .filter { it.isNotBlank() }
+                    .toList()
+                    .takeLast(lines)
+                    .joinToString("\n")
+            }
+        }
+        return buffer.toList().filter { it.isNotBlank() }.takeLast(lines).joinToString("\n")
+    }
+
     private fun appendToFile(line: String) {
         val file = sink ?: return
         if (sinkBroken) return

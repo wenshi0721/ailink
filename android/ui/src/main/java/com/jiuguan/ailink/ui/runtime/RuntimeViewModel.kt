@@ -1,5 +1,7 @@
 package com.jiuguan.ailink.ui.runtime
 
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
@@ -372,16 +374,120 @@ class RuntimeViewModel(private val container: AppContainer) : ViewModel() {
         }.ifBlank { logs.joinToString("\n") }
     }
 
-    /** 导出日志到文件（安装 + 启动合并）。 */
-    fun exportLog(context: Context): String {
-        val text = readFullLog()
-        if (text.isBlank()) return "暂无日志可导出"
-        return runCatching {
-            val result = LogExporter.export(context, "ailink-log", text)
-            LogExporter.share(context, result, "AiLink 日志")
-            "已导出到 ${result.location}"
-        }.getOrElse { error ->
-            "导出失败：${error.message ?: "未知错误"}"
+    /**
+     * 组装完整日志包：环境信息 + 安装日志 + 容器启动日志 + 会话日志。
+     *
+     * 环境信息不是装饰：一份没有版本号、没有网络类型的日志，事后基本无法归因
+     * （"是哪个包出的问题""当时是 WiFi 还是移动数据"都只能靠追问用户）。
+     */
+    fun buildLogBundle(): String = buildString {
+        val info = runCatching {
+            container.appContext.packageManager
+                .getPackageInfo(container.appContext.packageName, 0)
+        }.getOrNull()
+        val versionCode = info?.let {
+            androidx.core.content.pm.PackageInfoCompat.getLongVersionCode(it)
+        } ?: 0L
+
+        appendLine("===== 环境信息 =====")
+        appendLine("导出时间：${java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.US).format(java.util.Date())}")
+        appendLine("应用版本：${info?.versionName ?: "?"}（code $versionCode）")
+        appendLine("设备：${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL}")
+        appendLine("系统：Android ${android.os.Build.VERSION.RELEASE}（API ${android.os.Build.VERSION.SDK_INT}）")
+        appendLine("网络：${currentNetworkLabel()}")
+        appendLine("QQ 运行时：${if (QqBridgeService.running.value) "运行中" else "已停止"}")
+        appendLine("QQ 登录：${if (QqBridgeService.loggedIn.value) "已登录" else "未登录"}")
+        appendLine("离线标记：${if (QqBridgeService.offline.value) "是" else "否"}")
+        appendLine("容器：${if (runtime.isQqRuntimeInstalled()) "已安装" else "未安装"}")
+        appendLine()
+
+        val install = runtime.readInstallLogFull()
+        if (install.isNotBlank()) {
+            appendLine("===== 安装日志 =====")
+            appendLine(install)
+        }
+        val launch = runtime.readLaunchLog()
+        if (launch.isNotBlank()) {
+            appendLine("===== 容器日志（QQ/NapCat 输出） =====")
+            appendLine(launch)
+        }
+        val session = com.jiuguan.ailink.core.SessionLog.dump()
+        if (session.isNotBlank()) {
+            appendLine("===== 会话日志（AiLink 侧） =====")
+            appendLine(session)
+        }
+    }
+
+    /** 日志规模摘要：让用户在导出前知道文件大概多大，不用猜（只查文件长度，不读内容）。 */
+    fun logSummary(): String {
+        val sessionLines = com.jiuguan.ailink.core.SessionLog.lineCount()
+        val (launchBytes, installBytes) = runtime.logSizes()
+        fun kb(bytes: Long) = if (bytes < 1024) "${bytes}B" else "${bytes / 1024}KB"
+        return "会话 $sessionLines 行 · 容器日志 ${kb(launchBytes)} · 安装日志 ${kb(installBytes)}"
+    }
+
+    /** 界面尾部预览：优先显示会话日志最后几行（安装期之外也有内容可看）。 */
+    fun logTail(lines: Int = 8): String {
+        val session = com.jiuguan.ailink.core.SessionLog.tail(lines)
+        if (session.isNotBlank()) return session
+        return logs.takeLast(lines).joinToString("\n")
+    }
+
+    private fun currentNetworkLabel(): String {
+        val manager = container.appContext
+            .getSystemService(Context.CONNECTIVITY_SERVICE) as? android.net.ConnectivityManager
+            ?: return "未知"
+        val network = manager.activeNetwork ?: return "无网络"
+        val caps = manager.getNetworkCapabilities(network) ?: return "未知"
+        return when {
+            caps.hasTransport(android.net.NetworkCapabilities.TRANSPORT_WIFI) -> "WiFi"
+            caps.hasTransport(android.net.NetworkCapabilities.TRANSPORT_CELLULAR) -> "移动数据"
+            caps.hasTransport(android.net.NetworkCapabilities.TRANSPORT_ETHERNET) -> "有线"
+            else -> "其他"
+        }
+    }
+
+    /**
+     * 导出日志到文件。
+     *
+     * 与旧实现的两点区别：
+     *  - 不再依赖"安装日志有没有内容"这个前提——QQ 正常运行时也要能导出；
+     *  - 组装（可能几 MB）与写文件都放到 IO 线程，主线程只负责弹提示与拉起分享，
+     *    避免点一下导出就卡死/被系统判为无响应。
+     */
+    fun exportLog(context: Context, onResult: (String) -> Unit) {
+        viewModelScope.launch {
+            val text = withContext(Dispatchers.IO) { buildLogBundle() }
+            if (text.isBlank()) {
+                onResult("暂无日志可导出")
+                return@launch
+            }
+            val exported = withContext(Dispatchers.IO) {
+                runCatching { LogExporter.export(context, "ailink-log", text) }.getOrNull()
+            }
+            if (exported == null) {
+                onResult("导出失败：无法写入下载目录")
+                return@launch
+            }
+            val shared = runCatching { LogExporter.share(context, exported, "AiLink 日志") }.isSuccess
+            onResult(
+                if (shared) "已导出到 ${exported.location}（已打开分享）"
+                else "已导出到 ${exported.location}"
+            )
+        }
+    }
+
+    /** 复制完整日志到剪贴板（同样在 IO 线程组装）。 */
+    fun copyAllLog(context: Context, onResult: (String) -> Unit) {
+        viewModelScope.launch {
+            val text = withContext(Dispatchers.IO) { buildLogBundle() }
+            if (text.isBlank()) {
+                onResult("暂无日志可复制")
+                return@launch
+            }
+            val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+            clipboard.setPrimaryClip(ClipData.newPlainText("ailink-log", text))
+            onResult("已复制 ${text.length / 1024} KB")
         }
     }
 

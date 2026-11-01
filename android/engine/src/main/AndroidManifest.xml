@@ -2,4 +2,6 @@
 <!-- 库模块清单：仅声明本模块代码直接需要的权限，合并到主包由 :app 统一管理 -->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- NetworkDns / NetworkWatcher 读取当前网络与 DNS -->
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
 </manifest>

@@ -18,6 +18,7 @@ import com.jiuguan.ailink.data.gateway.convIdOf
 import com.jiuguan.ailink.data.repo.AiRepository
 import com.jiuguan.ailink.data.repo.MessageRepository
 import com.jiuguan.ailink.model.ConnStatus
+import com.jiuguan.ailink.model.Platform
 import com.jiuguan.ailink.model.TriggerScope
 import com.jiuguan.ailink.model.VisionSupport
 import com.jiuguan.ailink.core.reply.BehaviorConfig
@@ -30,6 +31,7 @@ import com.jiuguan.ailink.core.reply.ProactivePolicy
 import com.jiuguan.ailink.core.reply.ReplyPacing
 import com.jiuguan.ailink.core.reply.SegmentSplitter
 import com.jiuguan.ailink.core.reply.SessionGovernor
+import com.jiuguan.ailink.engine.service.QqBridgeService
 import com.jiuguan.ailink.engine.service.RuntimeState
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
@@ -112,6 +114,9 @@ class AccountRuntime(
     /** 「未发起」日志的节流时间戳，避免每分钟写一条。 */
     private var lastSkipLogAt = 0L
 
+    /** 订阅前台服务的 QQ 离线事件，用于纠正"WS 在线但账号已掉"的假状态。 */
+    private var qqOfflineJob: Job? = null
+
     private fun mutexOf(convId: String): Mutex = convMutexes.getOrPut(convId) { Mutex() }
 
     fun start() {
@@ -132,11 +137,42 @@ class AccountRuntime(
         }
         gateway.start()
         startProactive()
+        watchQqOffline()
+    }
+
+    /**
+     * 把"QQ 账号真的掉线了"同步到账号状态。
+     *
+     * OneBot 的 WS 连接和 QQ 账号登录状态是两回事：账号被踢下线后 NapCat 的端口照样监听、
+     * 心跳照样有回执，网关因此一直报「在线」。前台服务那边能直接读到内核推送的离线事件，
+     * 这里订阅它，才能让界面不再说谎。
+     */
+    private fun watchQqOffline() {
+        if (account.platformType != Platform.QQ) return
+        qqOfflineJob = scope.launch {
+            QqBridgeService.offline.collect { offline ->
+                if (offline) {
+                    update { current ->
+                        if (current.status == ConnStatus.OFFLINE) {
+                            current
+                        } else {
+                            current.copy(
+                                status = ConnStatus.ERROR,
+                                latencyMs = -1L,
+                                lastError = "QQ 已离线，等待自动恢复"
+                            )
+                        }
+                    }
+                }
+            }
+        }
     }
 
     fun stop() {
         proactiveJob?.cancel()
         proactiveJob = null
+        qqOfflineJob?.cancel()
+        qqOfflineJob = null
         gateway.stop()
         listenJob?.cancel()
         listenJob = null
