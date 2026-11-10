@@ -524,6 +524,40 @@ class LocalRuntime(private val context: Context) {
         }
     }
 
+    /**
+     * 清掉容器里残留的 QQ / Xvfb 进程。
+     *
+     * 为什么需要：`shutdown()` 只发 SIGTERM、不等进程退出，服务 3 秒后就被重新拉起，
+     * 此时旧 proot 里的 QQ 还活着——它继续占着 3001 端口和账号，新进程因为"该账号已在线"
+     * 只能停在二维码界面。表现为：界面显示"等待二维码/未登录"，但机器人实际仍在正常收发，
+     * 日志里也找不到新进程的 `登录成功`。
+     *
+     * 清理模式用 `[/]opt/QQ/qq` 这种括号写法：直接写 `/opt/QQ/qq` 会匹配到 pkill 自己所在的
+     * 命令行，把自己杀掉，导致什么都清不掉。
+     *
+     * @return 命中的清理动作（为空表示没有残留）。
+     */
+    fun killStrayQq(timeoutMs: Long = 6_000L): List<String> {
+        val rootfs = File(runtimeDir, "rootfs")
+        if (!File(rootfs, "opt/QQ/qq").exists()) return emptyList()
+        return runCatching {
+            val process = newProotProcess(
+                rootfs,
+                listOf(
+                    "/bin/bash", "-lc",
+                    "pkill -9 -f '[/]opt/QQ/qq' && echo KILLED-QQ ; " +
+                        "pkill -9 -f '[X]vfb' && echo KILLED-XVFB ; " +
+                        "rm -f /tmp/.X*-lock ; rm -rf /tmp/.X11-unix ; " +
+                        "echo CLEANED"
+                )
+            )
+            val output = process.inputStream.bufferedReader().use { it.readText() }
+            // 不用 Process.waitFor(timeout, unit)：API 26 方法，minSdk 24 会抛 NoSuchMethodError
+            awaitExit(process, timeoutMs)
+            output.lines().map { it.trim() }.filter { it.isNotBlank() }
+        }.getOrDefault(emptyList())
+    }
+
     /** 读取容器内的安装日志（失败时用于诊断）。 */
     fun readInstallLog(maxChars: Int = 20_000): String {
         val file = File(runtimeDir, "rootfs/opt/ailink/install.log")

@@ -7,6 +7,21 @@
 
 ## [未发布]
 
+## [1.1.8] - 2026-11-10
+
+### 修复
+
+- **停止/重启容器时闪退**（实测 `[exit] reason=4` 共 15 次）：`relaunch()`/`shutdown()` 关闭子进程 stdout 后，阻塞在 `forEachLine` 的日志协程抛出 `IOException("Stream closed")`，无人捕获，逃逸到 `UncaughtExceptionHandler` 连带杀掉进程。现在日志 reader 用 `use{}` 包住并把 IOException 记为「日志流已关闭」；只有当前进程退出时才 `stopSelf`，避免旧进程把新实例连同服务一起停掉；重启分支的 `relaunch()` 移出主线程（`terminate` 最长阻塞 10 秒）
+- **停止服务后旧容器未真正退出**：原来只发 SIGTERM 不等退出，服务 3 秒后被重新拉起，而旧 proot 里的 QQ 仍占用 3001 端口与账号，新进程因「该账号已在线」只能停在二维码界面 —— 表现为界面显示未登录/等待二维码，机器人实际仍由旧进程收发。现在 `shutdown()` 在独立线程等待容器退出，启动前用 `killStrayQq()` 清理残留 QQ/Xvfb 与 X 锁
+
+### 新增
+
+- 新增 `[exit]`（ApplicationExitInfo 上次死因）与 `[svc]`（服务生命周期，含实例 id）埋点，闪退与重复拉起可从导出日志直接定位
+
+### 文档
+
+- 新增《闪退排查交接》与《闪退排查-提示词》，记录本次两个根因、排查路径与可复用提示词
+
 ## [1.1.7] - 2026-11-01
 
 ### 新增
@@ -158,7 +173,8 @@
 - 内置 QQ 运行时首次登录需第二块屏幕扫码（平台安全策略）
 - NapCat 组件禁止商用，含该组件的 APK 不可商业分发（详见 THIRD-PARTY-NOTICES.md）
 
-[未发布]: https://github.com/wenshi0721/ailink/compare/1.1.7...HEAD
+[未发布]: https://github.com/wenshi0721/ailink/compare/1.1.8...HEAD
+[1.1.8]: https://github.com/wenshi0721/ailink/releases/tag/1.1.8
 [1.1.7]: https://github.com/wenshi0721/ailink/releases/tag/1.1.7
 [1.1.6]: https://github.com/wenshi0721/ailink/releases/tag/1.1.6
 [1.1.5]: https://github.com/wenshi0721/ailink/releases/tag/1.1.5

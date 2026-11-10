@@ -189,6 +189,7 @@ class QqBridgeService : Service() {
     private val keepAlive by lazy { KeepAlive(this, "qq") }
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    @Volatile
     private var process: Process? = null
     private var relaunchCount = 0
     private var lastRelaunchAt = 0L
@@ -287,6 +288,7 @@ class QqBridgeService : Service() {
 
     override fun onCreate() {
         super.onCreate()
+        lifecycleLog("onCreate")
         createChannel()
         // 网络事件直接决定 QQ 长连接的生死：切 WiFi/移动数据、弱网掉线都在这里
         networkWatcher = NetworkWatcher(applicationContext) { available, validated, cellular ->
@@ -295,6 +297,7 @@ class QqBridgeService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        lifecycleLog("onStartCommand action=${intent?.action} startId=$startId running=${_running.value}")
         if (intent?.action == "stop") {
             shutdown()
             return START_NOT_STICKY
@@ -303,7 +306,9 @@ class QqBridgeService : Service() {
         if (intent?.action == "restart") {
             if (_running.value) {
                 appendLog("[app] 收到配置变更，重启 QQ 生效")
-                relaunch(force = true)
+                // relaunch 内部 terminate() 会阻塞等旧进程退出（最长 10 秒），
+                // 放在主线程就是 ANR——ANR 被杀不经过崩溃处理器，表现为"无栈闪退"。
+                scope.launch { relaunch(force = true) }
             }
             return START_NOT_STICKY
         }
@@ -351,6 +356,14 @@ class QqBridgeService : Service() {
     private fun launchAndWatch(runtime: LocalRuntime, uin: String, qrMode: Boolean = false) {
         lastLaunchAt = System.currentTimeMillis()
 
+        // 启动前扫尾：上一轮的 QQ 可能还活着（shutdown 只发 SIGTERM 不等退出），
+        // 它会继续占着 3001 与账号，导致本次启动的 QQ 只能停在二维码界面。
+        val swept = runCatching { runtime.killStrayQq() }.getOrDefault(emptyList())
+        val killed = swept.filter { it.startsWith("KILLED-") }
+        if (killed.isNotEmpty()) {
+            appendLog("[app] 已清理容器内残留进程：${killed.joinToString("、")}")
+        }
+
         // 每次启动前按当前网络重写容器 DNS：换过卡/换过 WiFi 后，
         // 旧的 resolv.conf 可能指向已经不可达的 DNS，表现为"连不上、登录不了"。
         val dns = NetworkDns.writeResolvConf(applicationContext, runtime.runtimeDir)
@@ -382,8 +395,14 @@ class QqBridgeService : Service() {
         val result = runCatching { runtime.launchQq(effectiveUin, passwordMd5) }
         result.onFailure { error ->
             appendLog("[app] 启动失败：${error.message ?: "未知错误"}")
-            _running.value = false
-            stopSelf()
+            // 与"旧进程退出"同类：如果这次失败属于上一轮启动，此时可能已经有新进程在跑，
+            // 无条件 stopSelf 会把新实例停掉。只有确实没有进程时才停服务。
+            if (process == null) {
+                _running.value = false
+                stopSelf()
+            } else {
+                lifecycleLog("旧启动失败（已有新进程在跑），不停服务")
+            }
         }
         result.onSuccess { started ->
             process = started
@@ -391,18 +410,35 @@ class QqBridgeService : Service() {
             appendLog("[app] QQ 进程已启动，等待二维码…")
 
             logJob = scope.launch {
-                started.inputStream.bufferedReader().forEachLine { line ->
-                    if (line.isNotBlank()) {
-                        lastOutputAt = System.currentTimeMillis()
-                        silentRetries = 0
-                        appendLog(line)
-                        runtime.appendLaunchLog(line)
-                        parseLine(line)
+                // relaunch()/shutdown() 的 destroy()/terminate() 会在别的线程关掉子进程 stdout，
+                // 阻塞中的 readLine 随即抛 InterruptedIOException / IOException("Stream closed")。
+                // 这不是错误，而是"日志流已关闭"；不接住它会逃逸到 UncaughtExceptionHandler
+                // 直接带走进程（1.1.7 停止/重启必崩，[exit] reason=4 共 15 次）。
+                try {
+                    started.inputStream.bufferedReader().use { reader ->
+                        reader.forEachLine { line ->
+                            if (line.isNotBlank()) {
+                                lastOutputAt = System.currentTimeMillis()
+                                silentRetries = 0
+                                appendLog(line)
+                                runtime.appendLaunchLog(line)
+                                parseLine(line)
+                            }
+                        }
                     }
+                } catch (e: java.io.IOException) {
+                    lifecycleLog("QQ 日志流已关闭（进程被替换/停止）：${e.javaClass.simpleName}")
                 }
                 appendLog("[app] QQ 进程已退出")
-                _running.value = false
-                stopSelf()
+                // forEachLine 是阻塞调用，logJob.cancel() 拦不住它：旧进程被 relaunch/shutdown
+                // 结束后这里仍会执行到。只有"退出的就是当前进程"才代表服务该停，
+                // 否则会把刚重启好的新实例连同服务一起停掉（日志里每次重启都重建 keepalive）。
+                if (process === started) {
+                    _running.value = false
+                    stopSelf()
+                } else {
+                    lifecycleLog("旧 QQ 进程退出（已被替换/停止），不停服务")
+                }
             }
 
             qrJob = scope.launch { watchQrCode(runtime) }
@@ -971,19 +1007,30 @@ class QqBridgeService : Service() {
     }
 
     private fun shutdown() {
-        runCatching { keepAlive.release() }
+        lifecycleLog("shutdown")
+        val dying = process
+        process = null
         runCatching { logJob?.cancel() }
         runCatching { qrJob?.cancel() }
-        runCatching { process?.destroy() }
-        process = null
         _running.value = false
         runCatching { stopForegroundCompat() }
+        runCatching { keepAlive.release() }
         runCatching { stopSelf() }
+        // 必须等旧容器真正退出：只发 SIGTERM 的话，服务 3 秒后就被重新拉起，
+        // 而旧 QQ 还占着 3001 与账号，新进程只能停在二维码界面（界面与事实脱节）。
+        // 用独立线程等待，避免阻塞主线程（onStartCommand 在主线程调用这里）。
+        if (dying != null) {
+            Thread({
+                val exited = LocalRuntime(applicationContext).terminate(dying)
+                lifecycleLog(if (exited) "旧容器已退出，服务收尾完成" else "旧容器 10 秒未退出，已强制结束")
+            }, "qq-shutdown").start()
+        }
     }
 
     override fun onDestroy() {
         // 收尾阶段任何一步抛异常都会让进程崩在 onDestroy 里（表现为"点停止就闪退"），
         // 逐步兜住：宁可少释放一个锁，也不能崩。
+        lifecycleLog("onDestroy")
         runCatching { keepAlive.release() }
         runCatching { networkWatcher?.stop() }
         networkWatcher = null
@@ -994,6 +1041,15 @@ class QqBridgeService : Service() {
         runCatching { scope.cancel() }
         _running.value = false
         runCatching { super.onDestroy() }
+    }
+
+    /** 服务生命周期埋点：带实例 id，用来判断服务是否在重启过程中被反复重建。 */
+    private fun lifecycleLog(event: String) {
+        com.jiuguan.ailink.core.SessionLog.add(
+            "svc",
+            "qq@${Integer.toHexString(System.identityHashCode(this))} $event " +
+                "thread=${Thread.currentThread().name}"
+        )
     }
 
     private fun createChannel() {
